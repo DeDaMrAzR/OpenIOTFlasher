@@ -15,6 +15,7 @@ namespace BK7231Flasher
         private Button buttonTerminalConnect;
         private Button buttonTerminalClear;
         private Button buttonTerminalSend;
+		private CheckBox checkBoxTerminalAutoScroll;
         private Label labelTerminalStatus;
         private RichTextBox textBoxTerminalLog;
         private TextBox textBoxTerminalCommand;
@@ -95,6 +96,15 @@ namespace BK7231Flasher
             };
             buttonTerminalClear.Click += (sender, e) => textBoxTerminalLog.Clear();
             connectionBar.Controls.Add(buttonTerminalClear);
+
+			checkBoxTerminalAutoScroll = new CheckBox
+			{
+				Text = "Auto-scroll",
+				AutoSize = true,
+				Checked = true,
+				Padding = new Padding(8, 5, 0, 0),
+			};
+			connectionBar.Controls.Add(checkBoxTerminalAutoScroll);
 
             labelTerminalStatus = new Label
             {
@@ -604,7 +614,11 @@ namespace BK7231Flasher
                     textBoxTerminalLog.BeginInvoke((MethodInvoker)delegate
                     {
                         if (!textBoxTerminalLog.IsDisposed)
-                            RichTextUtil.AppendText(textBoxTerminalLog, text, color);
+							RichTextUtil.AppendText(
+								textBoxTerminalLog,
+								text,
+								color,
+								checkBoxTerminalAutoScroll.Checked);
                     });
                 }
                 catch (InvalidOperationException)
@@ -613,7 +627,11 @@ namespace BK7231Flasher
                 return;
             }
 
-            RichTextUtil.AppendText(textBoxTerminalLog, text, color);
+			RichTextUtil.AppendText(
+				textBoxTerminalLog,
+				text,
+				color,
+				checkBoxTerminalAutoScroll.Checked);
         }
     }
 }
