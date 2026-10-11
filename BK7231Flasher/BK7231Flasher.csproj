@@ -80,6 +80,7 @@
     <Compile Include="Flashers\W800Flasher.cs" />
     <Compile Include="Flashers\ECR6600Flasher.cs" />
     <Compile Include="Flashers\BaseFlasher.cs" />
+	<Compile Include="Flashers\SV6x66Flasher.cs" />
     <Compile Include="Flashers\FlasherFactory.cs" />
     <Compile Include="Flashers\IRomReadFlasher.cs" />
     <Compile Include="Flashers\BKChipIdentity.cs" />
@@ -246,6 +247,8 @@
     <EmbeddedResource Include="Floaders\RTL8721DA_Stub.bin" />
     <EmbeddedResource Include="Floaders\RTL8720E_Stub.bin" />
     <EmbeddedResource Include="Floaders\RDA5981_Stub.bin" />
+	<EmbeddedResource Include="Floaders\SV6x66_Loader.bin" />
+	<EmbeddedResource Include="Floaders\SV6x66_FlashAgent.bin" />
     <EmbeddedResource Include="Floaders\RTL8710B_Stub.bin" />
     <EmbeddedResource Include="Floaders\OPL1000A2_Stub.bin" />
     <EmbeddedResource Include="Floaders\OPL1000A2_Stub_stage1.bin" />

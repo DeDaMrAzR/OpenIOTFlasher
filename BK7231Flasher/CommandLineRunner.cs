@@ -97,6 +97,7 @@ namespace BK7231Flasher
             string outputName = "cliBackup";
             string writeFile = null;
             bool legacyMode = false;
+			bool acknowledgeCkw04BankBOverwrite = false;
             string tuyaInputFile = null;
             string tuyaOutputFile = null;
 
@@ -170,6 +171,9 @@ namespace BK7231Flasher
                     case "-legacy":     // legacy alias
                         legacyMode = true;
                         break;
+					case "--ack-ckw04-bank-b-overwrite":
+						acknowledgeCkw04BankBOverwrite = true;
+						break;
                     case "--help":
                     case "-help":
                     case "-h":
@@ -278,13 +282,29 @@ namespace BK7231Flasher
                 return;
             }
 
-            int exitCode = ExecuteOperation(operation, port ?? "", baud, chipType, ofs, len, outputName, writeFile, legacyMode);
+			int exitCode = ExecuteOperation(operation, port ?? "", baud, chipType, ofs, len, outputName, writeFile,
+				legacyMode, acknowledgeCkw04BankBOverwrite);
             Environment.Exit(exitCode);
         }
 
         static int ExecuteOperation(CliOperation operation, string port, int baud, BKType chipType,
-            int ofs, int len, string outputName, string writeFile, bool legacyMode)
+			int ofs, int len, string outputName, string writeFile, bool legacyMode,
+			bool acknowledgeCkw04BankBOverwrite)
         {
+			if (chipType == BKType.SV6X66)
+			{
+				if (operation != CliOperation.Read)
+				{
+					Console.Error.WriteLine("Error: CKW04/SV6x66 currently supports full flash read only.");
+					return 1;
+				}
+				if (!acknowledgeCkw04BankBOverwrite)
+				{
+					Console.Error.WriteLine("Error: CKW04/SV6x66 fread erases and replaces inactive Bank B before reading.");
+					Console.Error.WriteLine("Re-run with --ack-ckw04-bank-b-overwrite only if you accept that mutation.");
+					return 1;
+				}
+			}
             var logger = new ConsoleLogListener();
             var cts = new CancellationTokenSource();
 
@@ -695,6 +715,8 @@ namespace BK7231Flasher
                     return new SPIFlasher(ct);
                 case BKType.ECR6600:
                     return new ECR6600Flasher(ct);
+				case BKType.SV6X66:
+					return new SV6x66Flasher(ct);
                 case BKType.W600:
                     return new W600Flasher(ct);
                 case BKType.W800:
@@ -755,6 +777,8 @@ namespace BK7231Flasher
             Console.WriteLine("  --addr <0x11000>       Start address (hex or decimal, for read_flash/write_flash)");
             Console.WriteLine("  --size <0x1000>        Length in bytes (hex or decimal, for read_flash/write_flash)");
             Console.WriteLine("  --out <name>           Output name for backup (default: cliBackup)");
+			Console.WriteLine("  --ack-ckw04-bank-b-overwrite");
+			Console.WriteLine("                         Required for CKW04/SV6x66 fread; staging replaces Bank B");
             Console.WriteLine("  --no-stub              Use legacy (ROM-only) mode for ESP8266/ESP32 family chips (disable stub flasher)");
             Console.WriteLine();
             Console.WriteLine("Examples:");

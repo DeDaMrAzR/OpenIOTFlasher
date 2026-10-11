@@ -51,6 +51,7 @@ namespace BK7231Flasher
         XR806,
         XR809,
         XR872,
+		SV6X66,
 
         Detect,
         Invalid,

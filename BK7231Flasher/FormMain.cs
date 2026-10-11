@@ -1090,6 +1090,11 @@ namespace BK7231Flasher
                 sectors = parms.len / BK7231Flasher.SECTOR_SIZE;
                 isFullRead = false;
             }
+            else if(curType == BKType.SV6X66)
+			{
+				startSector = 0;
+				sectors = 0x200000 / BK7231Flasher.SECTOR_SIZE;
+			}
             else if(curType == BKType.BK7252)
             {
                 startSector = 0x0;
@@ -1621,6 +1626,18 @@ namespace BK7231Flasher
             {
                 return;
             }
+			if (curType == BKType.SV6X66)
+			{
+				DialogResult result = MessageBox.Show(
+					"CKW04/SV6x66 full flash read is not passive. It stages the embedded loader by erasing and replacing inactive Bank B, then reads the complete 2 MiB flash. The resulting backup cannot preserve the previous Bank-B contents.\n\nContinue?",
+					"CKW04/SV6x66 staged full read",
+					MessageBoxButtons.YesNo,
+					MessageBoxIcon.Warning);
+				if (result != DialogResult.Yes)
+				{
+					return;
+				}
+			}
             if (promptForBackupName() == false)
             {
                 return;
@@ -1706,9 +1723,9 @@ namespace BK7231Flasher
                 buttonTestWrite.Enabled = b;
                 buttonDoBackupAndFlashNew.Enabled = b;
                 buttonWriteOnly.Enabled = b;
-                updatePlatformCapabilityButtons(b);
                 buttonCustomOperation.Enabled = b;
                 buttonEraseAll.Enabled = b;
+				updatePlatformCapabilityButtons(b);
                 buttonStop.Enabled = !b;
                 buttonReadRomStop.Enabled = !b;
                 comboBoxReadRomChipType.Enabled = b;
@@ -1720,11 +1737,23 @@ namespace BK7231Flasher
 
         void updatePlatformCapabilityButtons(bool operationControlsEnabled)
         {
+			bool sv6x66ReadOnly = curType == BKType.SV6X66;
             bool obkConfigSupported = IsBeken == false || OBKFlashLayout.hasConfigLocation(curType);
             bool rfSupported = IsBeken == false || RFPartitionUtil.getRFOffset(curType) >= 0;
-            buttonWriteOBKConfig.Enabled = operationControlsEnabled && obkConfigSupported;
-            buttonReadOBKConfig.Enabled = operationControlsEnabled && obkConfigSupported;
-            buttonRestoreRF.Enabled = operationControlsEnabled && rfSupported;
+			buttonTestReadWrite.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonTestWrite.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonWriteOnly.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonDoBackupAndFlashNew.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonCustomOperation.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonEraseAll.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonBlankCheck.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonVerify.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonDetect.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonDownloadLatest.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonBrowseFirmware.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonWriteOBKConfig.Enabled = operationControlsEnabled && obkConfigSupported && !sv6x66ReadOnly;
+			buttonReadOBKConfig.Enabled = operationControlsEnabled && obkConfigSupported && !sv6x66ReadOnly;
+			buttonRestoreRF.Enabled = operationControlsEnabled && rfSupported && !sv6x66ReadOnly;
         }
         private void buttonStop_Click(object sender, EventArgs e)
         {

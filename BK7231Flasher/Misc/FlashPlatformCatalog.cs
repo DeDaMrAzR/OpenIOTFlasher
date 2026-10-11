@@ -49,6 +49,7 @@ namespace BK7231Flasher
             { BKType.XR806,      "XR806" },
             { BKType.XR809,      "XR809" },
             { BKType.XR872,      "XR872 (XF16)" },
+			{ BKType.SV6X66,     "CKW04/SV6x66" },
         };
 
         public static IEnumerable<ChipType> GetOrderedChipTypes()

@@ -44,7 +44,19 @@ namespace BK7231Flasher
             { BKType.XR806, GetXr806Instructions() },
             { BKType.XR809, GetXrUart0TwoBootPinsInstructions("XR809") },
             { BKType.XR872, GetXrUart0TwoBootPinsInstructions("XR872") },
+			{ BKType.SV6X66, GetSv6x66Instructions() },
         };
+
+		static string GetSv6x66Instructions()
+		{
+			return "Connect one 3.3 V USB-to-TTL UART to the CKW04 product/factory port:" + System.Environment.NewLine +
+				"- Adapter RX -> SV6166F GPIO7 / TXD1" + System.Environment.NewLine +
+				"- Adapter TX -> SV6166F GPIO6 / RXD1" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				"- Reset the target manually when prompted" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"This profile requires stock FWSWES-SV04MATE-3.7.1. The flasher starts at 9600 baud and switches the same UART to 2 Mbaud. RTS is not used. Reading necessarily erases and replaces inactive Bank B, so the resulting 2 MiB BIN is not a pristine pre-staging Bank-B image.";
+		}
 
         static string GetBekenUart1Instructions(string platformName)
         {
