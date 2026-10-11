@@ -30,7 +30,7 @@
 | RTL87X0C (AmebaZ2) | Realtek | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | RTL8721DA (AmebaDp) | Realtek | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | RTL8720E (AmebaLite) | Realtek | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
-| W600 | WinnerMicro | ⚠️⁵ | ✅⁵ | ➖ | ➖ | ✅ | ⚠️⁵ | ➖ | ➖ | ⚠️⁵ |
+| W600⁵ | WinnerMicro | ✅ | ✅ | ➖ | ➖ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | W80x | WinnerMicro | ✅ | ✅ | ➖ | ➖ | ✅ | ✅ | ➖ | ➖ | ℹ️ |
 | XR806 | XRadio | ✅ | ✅ | ➖ | ➖ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | XR809 | XRadio | ✅ | ✅ | ➖ | ➖ | ✅ | ✅ | ➖ | ➖ | ✅ |
@@ -50,7 +50,7 @@ R cmp / W cmp - Read/write compression via custom flasher stub; ➖ means not ap
 ² OBK config location is not defined for this platform<br>
 ³ Always writes from `0x0`<br>
 ⁴ Custom reads work, but custom writes still follow the image/partition flow instead of arbitrary raw offsets.<br>
-⁵ W600 backup identifies a supported 1 MiB secboot banner over UART0, temporarily replaces secboot sector `0x2000-0x2FFF`, reads the full flash, and reconstructs that sector from the matching embedded secboot so the saved backup retains the detected original version. After a successful read, the SRAM loader returns to Mask ROM and installs V3.13 before completion; an interrupted or failed backup instead restores the detected original secboot. V3.3, V3.9, and V3.13 are catalogued; V3.14 is UART1-only according to the vendor SDK and is not supported by this UART0 reader. Other unknown or 2 MiB banners stop before erase. Manual reset is requested for entry, loader start, and normal boot after restoration or update. Standalone OBK config writes remain disabled.<br>
+⁵ W600 support is validated on 1 MiB devices. 2 MiB devices have not been tested.<br>
 ⁶ OBK config reads work, but standalone OBK config writes are not implemented.<br>
 ⁷ RF partition restore and relocation are not defined for this platform.<br>
 ⁸ CKW04/SV6x66 support is limited to stock `FWSWES-SV04MATE-3.7.1` with JEDEC `C8 40 15` and a 2 MiB flash. A full read stages the embedded loader by erasing and replacing inactive Bank B, so it is not a pristine pre-staging Bank-B backup. Write support remains untested and disabled.<br>
