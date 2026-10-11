@@ -75,6 +75,7 @@ namespace BK7231Flasher
                 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
                 1500000, 2000000, 3000000,
             });
+			comboBoxTerminalBaud.SelectionChangeCommitted += ComboBoxTerminalBaud_SelectionChangeCommitted;
             connectionBar.Controls.Add(comboBoxTerminalBaud);
 
             buttonTerminalConnect = new Button
@@ -310,6 +311,54 @@ namespace BK7231Flasher
             }
         }
 
+		private void ComboBoxTerminalBaud_SelectionChangeCommitted(object sender, EventArgs e)
+		{
+			ApplySelectedTerminalBaudRate();
+		}
+
+		private void ApplySelectedTerminalBaudRate()
+		{
+			SerialPort port = terminalSerialPort;
+			if (port == null || !IsTerminalConnected)
+				return;
+
+			int newBaudRate;
+			if (!int.TryParse(comboBoxTerminalBaud.Text, out newBaudRate) || newBaudRate <= 0)
+			{
+				AppendTerminalLine("Enter a valid baud rate.", Color.Red);
+				comboBoxTerminalBaud.Text = port.BaudRate.ToString();
+				return;
+			}
+
+			int previousBaudRate = port.BaudRate;
+			if (newBaudRate == previousBaudRate)
+				return;
+
+			try
+			{
+				port.BaudRate = newBaudRate;
+				comboBoxTerminalBaud.Text = port.BaudRate.ToString();
+				UpdateTerminalStatus(true);
+				AppendTerminalLine(
+					"Baud rate changed from " + previousBaudRate + " to " + port.BaudRate + ".",
+					Color.DarkGreen);
+			}
+			catch (Exception ex)
+			{
+				int activeBaudRate = previousBaudRate;
+				try
+				{
+					activeBaudRate = port.BaudRate;
+					UpdateTerminalStatus(true);
+				}
+				catch
+				{
+				}
+				comboBoxTerminalBaud.Text = activeBaudRate.ToString();
+				AppendTerminalLine("Unable to change baud rate: " + ex.Message, Color.Red);
+			}
+		}
+
         private void TerminalSerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             SerialPort port = sender as SerialPort;
@@ -445,12 +494,19 @@ namespace BK7231Flasher
         private void SetTerminalConnectedState(bool connected)
         {
             comboBoxTerminalPort.Enabled = !connected;
-            comboBoxTerminalBaud.Enabled = !connected;
+			comboBoxTerminalBaud.Enabled = true;
             buttonTerminalConnect.Text = connected ? "Disconnect" : "Connect";
             buttonTerminalSend.Enabled = connected;
-            labelTerminalStatus.Text = connected ? "Connected" : "Disconnected";
-            labelTerminalStatus.ForeColor = connected ? Color.DarkGreen : SystemColors.ControlText;
+			UpdateTerminalStatus(connected);
         }
+
+		private void UpdateTerminalStatus(bool connected)
+		{
+			labelTerminalStatus.Text = connected
+				? "Connected at " + terminalSerialPort.BaudRate + " baud"
+				: "Disconnected";
+			labelTerminalStatus.ForeColor = connected ? Color.DarkGreen : SystemColors.ControlText;
+		}
 
         private void AppendTerminalLine(string text, Color color)
         {
