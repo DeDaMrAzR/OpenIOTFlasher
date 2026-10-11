@@ -323,22 +323,17 @@ namespace BK7231Flasher
 
 		private void ComboBoxTerminalBaud_SelectionChangeCommitted(object sender, EventArgs e)
 		{
-			ApplySelectedTerminalBaudRate();
+			if (comboBoxTerminalBaud.SelectedItem == null)
+				return;
+
+			ApplySelectedTerminalBaudRate((int)comboBoxTerminalBaud.SelectedItem);
 		}
 
-		private void ApplySelectedTerminalBaudRate()
+		private void ApplySelectedTerminalBaudRate(int newBaudRate)
 		{
 			SerialPort port = terminalSerialPort;
 			if (port == null || !IsTerminalConnected)
 				return;
-
-			int newBaudRate;
-			if (!int.TryParse(comboBoxTerminalBaud.Text, out newBaudRate) || newBaudRate <= 0)
-			{
-				AppendTerminalLine("Enter a valid baud rate.", Color.Red);
-				comboBoxTerminalBaud.Text = port.BaudRate.ToString();
-				return;
-			}
 
 			int previousBaudRate = port.BaudRate;
 			if (newBaudRate == previousBaudRate)
