@@ -551,10 +551,39 @@ namespace BK7231Flasher
         BaseFlasher flasher;
         string serialName;
         BKType curType;
-        void refreshType()
-        {
-            refreshType(comboBoxChipType, comboBoxUART, comboBoxBaudRate);
-        }
+		void refreshType()
+		{
+			refreshType(comboBoxChipType, comboBoxUART, comboBoxBaudRate);
+			updateFlasherBaudRates();
+		}
+
+		void updateFlasherBaudRates()
+		{
+			if(comboBoxBaudRate.Items.Count == 0)
+				return;
+
+			int[] baudRates = curType == BKType.W600
+				? BaudRates.Where(baud => baud != 1500000 && baud != 3000000).ToArray()
+				: BaudRates;
+			object previousBaud = comboBoxBaudRate.SelectedItem;
+			comboBoxBaudRate.DropDownStyle = curType == BKType.W600
+				? ComboBoxStyle.DropDownList
+				: ComboBoxStyle.DropDown;
+
+			if(comboBoxBaudRate.Items.Cast<int>().SequenceEqual(baudRates))
+				return;
+
+			comboBoxBaudRate.Items.Clear();
+			foreach(int baud in baudRates)
+				comboBoxBaudRate.Items.Add(baud);
+
+			if(previousBaud != null && comboBoxBaudRate.Items.Contains(previousBaud))
+				comboBoxBaudRate.SelectedItem = previousBaud;
+			else if(curType == BKType.W600)
+				comboBoxBaudRate.SelectedItem = 2000000;
+			else if(comboBoxBaudRate.Items.Count > 0)
+				comboBoxBaudRate.SelectedIndex = 0;
+		}
 
         void updateReadRomControlsForSelectedPlatform(bool logBootInstructions)
         {

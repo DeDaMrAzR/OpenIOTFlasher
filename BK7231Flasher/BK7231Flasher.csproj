@@ -227,7 +227,7 @@
     <EmbeddedResource Include="Floaders\TR6260_Partition.bin" />
     <EmbeddedResource Include="Floaders\BL702Floader_32m.bin" />
     <EmbeddedResource Include="Floaders\W800_Stub.bin" />
-    <EmbeddedResource Include="Floaders\W600_UART_Reader.bin" />
+    <EmbeddedResource Include="Floaders\W600_Stub.bin" />
     <EmbeddedResource Include="Floaders\W600_Secboot_1M_V3_3.bin" />
     <EmbeddedResource Include="Floaders\W600_Secboot_1M_V3_9.bin" />
     <EmbeddedResource Include="Floaders\W600_Secboot_1M_V3_13.bin" />
@@ -247,8 +247,8 @@
     <EmbeddedResource Include="Floaders\RTL8721DA_Stub.bin" />
     <EmbeddedResource Include="Floaders\RTL8720E_Stub.bin" />
     <EmbeddedResource Include="Floaders\RDA5981_Stub.bin" />
-	<EmbeddedResource Include="Floaders\SV6x66_Loader.bin" />
-	<EmbeddedResource Include="Floaders\SV6x66_FlashAgent.bin" />
+	<EmbeddedResource Include="Floaders\SV6x66_Stub_stage1.bin" />
+	<EmbeddedResource Include="Floaders\SV6x66_Stub.bin" />
     <EmbeddedResource Include="Floaders\RTL8710B_Stub.bin" />
     <EmbeddedResource Include="Floaders\OPL1000A2_Stub.bin" />
     <EmbeddedResource Include="Floaders\OPL1000A2_Stub_stage1.bin" />

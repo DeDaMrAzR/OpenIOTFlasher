@@ -22,17 +22,24 @@ namespace BK7231Flasher
 		private const uint FlashBase = 0x08000000;
 		private const uint HelperVectorAddress = 0x08002100;
 		private const uint HelperResetAddress = 0x08002141;
-		private const uint HelperPayloadAddress = 0x08002180;
+		private const int HelperPayloadOffset = 0x1A0;
+		private const uint HelperPayloadAddress = 0x080021A0;
 		private const uint HelperRamAddress = 0x20030000;
 		private const uint HelperApbClock = 40000000;
-		private const int HelperMaxReadLength = 1024;
+		private const int HelperMaxReadLength = 16 * 1024;
+		private const int SerialReadBufferSize = 64 * 1024;
+		private const int MinimumReadResponseTimeoutMs = 100;
+		private const int ReadResponseTimeoutMarginMs = 50;
+		private const int ReadPreparationPerKiBMs = 10;
+		private const int RetryReceiveIdleMs = 20;
 		private const int ProtocolRequestSize = 16;
 		private const int ProtocolResponseSize = 20;
 		private const byte ProtocolVersion = 2;
 		private const byte ProtocolInfo = 0;
 		private const byte ProtocolRead = 1;
 		private const byte ProtocolReturnToRom = 2;
-		private static readonly byte[] ReaderProtocolMarker = Encoding.ASCII.GetBytes("W600RD03");
+		private const byte ProtocolFlashId = 4;
+		private static readonly byte[] ReaderProtocolMarker = System.Text.Encoding.ASCII.GetBytes("W600RD30");
 		private const int SecbootEntryTimeoutMs = 90000;
 		private const int HelperEntryTimeoutMs = 90000;
 		private const int RomEntryTimeoutMs = 15000;
@@ -56,6 +63,7 @@ namespace BK7231Flasher
 		byte[] flashID;
 		MemoryStream ms;
 		volatile bool secbootRecoveryRequired;
+		string lastXmodemProgressText;
 
 		public W600Flasher(CancellationToken ct) : base(ct)
 		{
@@ -74,6 +82,7 @@ namespace BK7231Flasher
 			try
 			{
 				serial = new SerialPort(serialName, 115200);
+				serial.ReadBufferSize = SerialReadBufferSize;
 				serial.Open();
 				serial.DiscardInBuffer();
 				serial.DiscardOutBuffer();
@@ -99,7 +108,7 @@ namespace BK7231Flasher
 			if(res != null && res[0] == 'F' && res[1] == 'I' && res[2] == 'D')
 			{
 				flashID = new byte[] { Convert.ToByte($"{(char)res[4]}{(char)res[5]}", 16) };
-				addLogLine($"Flash ID: 0x{flashID[0]:X}");
+				addLogLine($"Mask ROM flash manufacturer ID: 0x{flashID[0]:X2}.");
 				return flashID;
 			}
 			addLogLine("No Mask-ROM flash-ID response; installed secboot is active.");
@@ -181,7 +190,6 @@ namespace BK7231Flasher
 				addErrorLine("W600 ROM returned an invalid flash-ID response.");
 				return null;
 			}
-			addLogLine($"Flash ID: 0x{flashID[0]:X}");
 			return flashID;
 		}
 
@@ -243,7 +251,6 @@ namespace BK7231Flasher
 					if(text.IndexOf(profile.Banner, StringComparison.Ordinal) >= 0)
 					{
 						addLogLine();
-						addLogLine($"Detected supported W600 secboot: {profile.Banner}");
 						return profile;
 					}
 				}
@@ -264,7 +271,7 @@ namespace BK7231Flasher
 				}
 				if(sw.ElapsedMilliseconds >= nextPrompt)
 				{
-					logger.setLogProgress("Sending ESC on UART0; press and release RESET on the W600...", Color.DarkOrange);
+					logger.setLogProgress("Pull RESET pin to GND...", Color.DarkOrange);
 					nextPrompt = sw.ElapsedMilliseconds + 5000;
 				}
 				Thread.Sleep(10);
@@ -278,7 +285,8 @@ namespace BK7231Flasher
 		{
 			if((sequence % 4) == 1)
 			{
-				logger.setLogProgress($"Writing 0x{offset:X}...", Color.Black);
+				lastXmodemProgressText = $"Writing 0x{offset:X6}...";
+				logger.setLogProgress(lastXmodemProgressText, Color.Black);
 			}
 			logger.setProgress(sentBytes, total);
 		}
@@ -410,14 +418,12 @@ namespace BK7231Flasher
 				if(fls.Length != HelperSectorSize)
 					throw new InvalidDataException("The W600 helper FLS transfer must be exactly one 4 KiB XMODEM span.");
 
-				addLogLine("W600 UART backup will identify secboot before modifying flash.");
-				addLogLine("The temporary loader replaces only secboot sector 0x2000-0x2FFF; the application is preserved.");
 				profile = WaitForSupportedSecboot(profiles, false, SecbootEntryTimeoutMs);
 				if(profile == null)
 					return;
 
 				secbootRecoveryRequired = true;
-				addLogLine("Requesting secboot erase/reset to enter Mask ROM...");
+				addLogLine("Requesting Mask ROM entry...");
 				ExecuteCommand(0x3F, null, 1, 0, isErrorExpected: true);
 				serial.BaudRate = 115200;
 				if(!WaitForRomAtCurrentBaud(RomEntryTimeoutMs, "after secboot 0x3F") || ReadFlashIdWithoutErase() == null)
@@ -443,9 +449,11 @@ namespace BK7231Flasher
 				if(!WaitForHelper(HelperEntryTimeoutMs, false, out int helperChunk))
 					throw new IOException("Timed out waiting for the temporary W600 secboot reader.");
 				helperReady = true;
+				LogHelperFlashInfo();
 
 				logger.setState("Reading W600 flash", Color.Green);
 				int chunkSize = Math.Min(helperChunk, HelperMaxReadLength);
+				addLogLine($"Reading W600 flash: {FlashSize} bytes at {baudrate} baud...");
 				byte[] result = ReadHelperRange(FlashBase, FlashSize, chunkSize);
 				if(result == null)
 					throw new IOException(isCancelled ? "W600 flash read was cancelled." : "W600 flash read failed.");
@@ -460,14 +468,10 @@ namespace BK7231Flasher
 					throw new IOException($"The flash was read, but the automatic {updateProfile.Version} secboot update failed.");
 				restorationCompleted = true;
 				secbootRecoveryRequired = false;
-				addLogLine($"Reconstructed flash offsets 0x{SecbootOffset:X}-0x{SecbootOffset + HelperSectorSize - 1:X}; secboot updated to {updateProfile.Version}.");
-
 				byte[] requested = new byte[length];
 				Array.Copy(reconstructedFlash, offset, requested, 0, length);
 				ms = new MemoryStream(requested);
-				logger.setProgress(1, 1);
-				logger.setState("Reading done", Color.DarkGreen);
-				addLogLine($"Done W600 flash read: 0x{offset:X6}-0x{offset + length - 1:X6} ({length} bytes), SHA-256 {GetSha256(requested)}.");
+				logger.setState("Read complete", Color.DarkGreen);
 			}
 			catch(Exception ex)
 			{
@@ -514,7 +518,7 @@ namespace BK7231Flasher
 			string fullPath = "backups/" + fileName;
 			byte[] data = ms.ToArray();
 			File.WriteAllBytes(fullPath, data);
-			addLogLine("Wrote " + data.Length + " bytes to " + fileName);
+			addSuccess("Saved W600 flash backup: " + data.Length + " bytes to " + fullPath + "." + Environment.NewLine);
 			logger.onReadResultQIOSaved(data, "", fullPath);
 			return true;
 		}
@@ -700,7 +704,7 @@ namespace BK7231Flasher
 			int totalC = 0;
 			int totalP = 0;
 			int totalOther = 0;
-			addLogLine($"Waiting for Mask ROM ({phase}, {serial.BaudRate} baud)...");
+			addLogLine("Waiting for Mask ROM...");
 			while(sw.ElapsedMilliseconds < timeoutMs)
 			{
 				if(serial.BytesToRead > 0)
@@ -753,12 +757,10 @@ namespace BK7231Flasher
 					serial.BaudRate = baudrate;
 					serial.DiscardInBuffer();
 					ushort sequence = 0x7F00;
-					addLogLine("Requesting the SRAM loader to erase its temporary sector and return to Mask ROM...");
 					if(TryHelperCommand(ProtocolReturnToRom, sequence,
-						FlashBase + SecbootOffset, 0, 3000, true, out _, out string error,
-						out _))
+						FlashBase + SecbootOffset, 0, 3000, true, out _, out string error))
 					{
-						addLogLine("SRAM loader acknowledged the return-to-ROM command.");
+						addLogLine("SRAM loader exiting...");
 						serial.BaudRate = 115200;
 						serial.DiscardInBuffer();
 						romReady = WaitForRomAtCurrentBaud(RomEntryTimeoutMs, "after temporary-reader erase");
@@ -811,14 +813,11 @@ namespace BK7231Flasher
 								ushort sequence = 0x7F00;
 								addLogLine("Temporary SRAM reader responded; requesting bounded sector erase and watchdog return to Mask ROM.");
 								if(!TryHelperCommand(ProtocolReturnToRom, sequence,
-									FlashBase + SecbootOffset, 0, 3000, true, out _, out string error,
-									out bool recoveryStartupBeacon))
+									FlashBase + SecbootOffset, 0, 3000, true, out _, out string error))
 								{
 									addErrorLine("Temporary reader could not return to Mask ROM: " + error);
 									return false;
 								}
-								if(recoveryStartupBeacon)
-									addLogLine("W600 reader startup beacon was also observed during recovery.");
 								addLogLine("SRAM reader acknowledged return-to-ROM command; switching host UART to 115200.");
 								serial.BaudRate = 115200;
 								serial.DiscardInBuffer();
@@ -859,15 +858,19 @@ namespace BK7231Flasher
 				addLogLine(isUpdate
 					? $"Updating secboot to {profile.Version}..."
 					: $"Restoring {profile.Version} secboot...");
-				Stopwatch restoreTransfer = Stopwatch.StartNew();
-				int restoreSent = xm.Send(restoreFls, SecbootOffset);
-				addLogLine($"Secboot {(isUpdate ? "update" : "restore")} XMODEM result: {restoreSent}/{restoreFls.Length} bytes in {restoreTransfer.ElapsedMilliseconds} ms.");
+				lastXmodemProgressText = null;
+				int restoreSent;
+				restoreSent = xm.Send(restoreFls, SecbootOffset);
+				if(lastXmodemProgressText != null)
+					logger.setLogProgress(lastXmodemProgressText + Environment.NewLine,
+						restoreSent == restoreFls.Length ? Color.Green : Color.Red);
 				if(restoreSent != restoreFls.Length)
 					return false;
 
 				serial.BaudRate = 115200;
-				logger.setLogProgress($"W600 {profile.Version} secboot {(isUpdate ? "updated" : "restored")}. Press RESET to resume normal boot." + Environment.NewLine,
-					Color.Green);
+				logger.setLogProgress((isUpdate
+					? "Read complete."
+					: $"W600 {profile.Version} secboot restored.") + Environment.NewLine, Color.Green);
 				return true;
 			}
 			catch(Exception ex)
@@ -896,15 +899,15 @@ namespace BK7231Flasher
 
 		private byte[] BuildHelperPayload(uint helperBaudRegister)
 		{
-			byte[] ramLoader = FLoaders.GetRawBinaryFromAssembly("W600_UART_Reader");
-			if(ramLoader == null || ramLoader.Length == 0 || 0x180 + ramLoader.Length > HelperTransferPayloadSize)
+			byte[] ramLoader = FLoaders.GetRawBinaryFromAssembly("W600_Stub");
+			if(ramLoader == null || ramLoader.Length == 0 || HelperPayloadOffset + ramLoader.Length > HelperTransferPayloadSize)
 				throw new InvalidDataException("The embedded W600 UART reader has an unexpected size.");
 			if(ramLoader.Length < ReaderProtocolMarker.Length)
-				throw new InvalidDataException("The embedded W600 UART reader has no bootstrap-v3 build marker. Build and install the reader before building OpenIOTflasher.");
+				throw new InvalidDataException("The embedded W600 UART reader has no W600RD30 build marker. Build and install the reader before building OpenIOTflasher.");
 			for(int i = 0; i < ReaderProtocolMarker.Length; i++)
 			{
 				if(ramLoader[ramLoader.Length - ReaderProtocolMarker.Length + i] != ReaderProtocolMarker[i])
-					throw new InvalidDataException("The embedded W600 UART reader is not bootstrap v3. Build and install the reader before building OpenIOTflasher.");
+					throw new InvalidDataException("The embedded W600 UART reader is not W600RD30. Build and install the reader before building OpenIOTflasher.");
 			}
 
 			byte[] sector = new byte[HelperTransferPayloadSize];
@@ -913,36 +916,49 @@ namespace BK7231Flasher
 			for(int i = 0; i < 56; i++)
 				sector[i] = 0;
 
-			// W600 secboot vector table. The reset handler is a small Thumb copy stub
-			// which moves the proven position-dependent reader into SRAM and branches to it.
+			// W600 secboot vector table. The reset handler reproduces V3.13's clock
+			// transition while executing from flash, then copies the reader to SRAM.
 			StoreUInt32(sector, 0x100, 0x20038000);
 			StoreUInt32(sector, 0x104, HelperResetAddress);
 			byte[] copyStub = new byte[]
 			{
 				0x72, 0xB6,             // cpsid i
-				0x07, 0x48,             // ldr r0, [pc, #28] ; source
-				0x07, 0x49,             // ldr r1, [pc, #28] ; destination
-				0x08, 0x4A,             // ldr r2, [pc, #32] ; length
+				0x0B, 0x4C,             // ldr r4, [pc, #44] ; clock-divider register
+				0x23, 0x68,             // ldr r3, [r4]
+				0x0B, 0x4A,             // ldr r2, [pc, #44] ; divider-clear mask
+				0x13, 0x40,             // ands r3, r2
+				0x23, 0x60,             // str r3, [r4]
+				0x23, 0x68,             // ldr r3, [r4]
+				0x0A, 0x4A,             // ldr r2, [pc, #40] ; final divider bits
+				0x13, 0x43,             // orrs r3, r2
+				0x23, 0x60,             // str r3, [r4]
+				0x09, 0x48,             // ldr r0, [pc, #36] ; source
+				0x0A, 0x49,             // ldr r1, [pc, #40] ; destination
+				0x0A, 0x4A,             // ldr r2, [pc, #40] ; length
 				0x03, 0x78,             // ldrb r3, [r0]
 				0x0B, 0x70,             // strb r3, [r1]
 				0x01, 0x30,             // adds r0, #1
 				0x01, 0x31,             // adds r1, #1
 				0x01, 0x3A,             // subs r2, #1
 				0xF9, 0xD1,             // bne copy loop
-				0x05, 0x48,             // ldr r0, [pc, #20] ; selected baud divisor argument
-				0x06, 0x49,             // ldr r1, [pc, #24] ; SRAM Thumb entry
+				0x08, 0x48,             // ldr r0, [pc, #32] ; selected baud divisor argument
+				0x08, 0x49,             // ldr r1, [pc, #32] ; SRAM Thumb entry
 				0x08, 0x47,             // bx r1
+				0x00, 0xBF,             // nop
 				0x00, 0xBF,             // nop; align literal pool
 			};
 			Array.Copy(copyStub, 0, sector, 0x140, copyStub.Length);
-			StoreUInt32(sector, 0x160, HelperPayloadAddress);
-			StoreUInt32(sector, 0x164, HelperRamAddress);
-			StoreUInt32(sector, 0x168, (uint)ramLoader.Length);
-			StoreUInt32(sector, 0x16C, helperBaudRegister);
-			StoreUInt32(sector, 0x170, HelperRamAddress | 1u);
-			Array.Copy(ramLoader, 0, sector, 0x180, ramLoader.Length);
+			StoreUInt32(sector, 0x170, 0x40000710u);
+			StoreUInt32(sector, 0x174, 0xFFFFF0F0u);
+			StoreUInt32(sector, 0x178, 0x80000212u);
+			StoreUInt32(sector, 0x17C, HelperPayloadAddress);
+			StoreUInt32(sector, 0x180, HelperRamAddress);
+			StoreUInt32(sector, 0x184, (uint)ramLoader.Length);
+			StoreUInt32(sector, 0x188, helperBaudRegister);
+			StoreUInt32(sector, 0x18C, HelperRamAddress | 1u);
+			Array.Copy(ramLoader, 0, sector, HelperPayloadOffset, ramLoader.Length);
 
-			int runLength = 0x80 + ramLoader.Length;
+			int runLength = 0xA0 + ramLoader.Length;
 			StoreUInt32(sector, 0x00, 0xA0FFFF9F);
 			StoreUInt16(sector, 0x04, 2); // secboot image
 			StoreUInt16(sector, 0x06, 0); // uncompressed
@@ -960,38 +976,53 @@ namespace BK7231Flasher
 		{
 			chunkSize = 0;
 			ushort sequence = 1;
-			bool startupBeaconLogged = false;
+			int failedAttempts = 0;
+			ushort lastFailedSequence = 0;
+			string lastFailure = null;
 			Stopwatch total = Stopwatch.StartNew();
 			long nextProgress = 5000;
 			while(total.ElapsedMilliseconds < timeoutMs && (ignoreCancellation || !isCancelled))
 			{
-				bool commandOk = TryHelperCommand(ProtocolInfo, sequence++, 0, 0, 750,
-					ignoreCancellation, out byte[] payload, out string error, out bool startupBeaconSeen);
-				if(startupBeaconSeen && !startupBeaconLogged)
+				ushort requestSequence = sequence++;
+				bool commandOk = TryHelperCommand(ProtocolInfo, requestSequence, 0, 0, 750,
+					ignoreCancellation, out byte[] payload, out string error);
+				if(!commandOk)
 				{
-					logger.setLogProgress("W600 reader bootstrap confirmed: reset vector, SRAM copy, and UART initialization completed." +
-						Environment.NewLine, Color.Green);
-					startupBeaconLogged = true;
+					failedAttempts++;
+					lastFailedSequence = requestSequence;
+					lastFailure = error;
 				}
-				if(commandOk)
+				else if(payload.Length != 16)
 				{
-					if(payload.Length == 16 && ReadUInt32(payload, 0) == FlashBase &&
-						ReadUInt32(payload, 4) == (uint)FlashSize &&
-						ReadUInt32(payload, 12) == 0x00020000u)
+					failedAttempts++;
+					lastFailedSequence = requestSequence;
+					lastFailure = $"unexpected INFO payload length {payload.Length}/16 bytes";
+				}
+				else
+				{
+					uint reportedBase = ReadUInt32(payload, 0);
+					uint reportedSize = ReadUInt32(payload, 4);
+					int reportedChunkSize = ReadUInt16(payload, 8);
+					uint reportedSectorSize = ReadUInt32(payload, 12);
+					if(reportedBase == FlashBase && reportedSize == (uint)FlashSize &&
+						reportedSectorSize == 0x00020000u && reportedChunkSize > 0 &&
+						reportedChunkSize <= HelperMaxReadLength)
 					{
-						chunkSize = ReadUInt16(payload, 8);
-						if(chunkSize > 0 && chunkSize <= HelperMaxReadLength)
-						{
-							logger.setLogProgress(
-								$"W600 UART reader ready: flash=0x{FlashBase:X8}+0x{FlashSize:X}, chunk={chunkSize}." + Environment.NewLine,
-								Color.Green);
-							return true;
-						}
+						chunkSize = reportedChunkSize;
+						logger.setLogProgress("W600 UART loader ready." + Environment.NewLine, Color.Green);
+						return true;
 					}
+					failedAttempts++;
+					lastFailedSequence = requestSequence;
+					lastFailure = $"unexpected INFO geometry base=0x{reportedBase:X8}, size=0x{reportedSize:X}, " +
+						$"chunk={reportedChunkSize}, sector=0x{reportedSectorSize:X}";
 				}
 				if(total.ElapsedMilliseconds >= nextProgress)
 				{
-					logger.setLogProgress($"Waiting for W600 UART reader ({total.ElapsedMilliseconds / 1000}s)...", Color.DarkOrange);
+					string failureSummary = lastFailure != null
+						? $" Last INFO sequence {lastFailedSequence} failed: {lastFailure}; {failedAttempts} failed attempt(s)."
+						: string.Empty;
+					logger.setLogProgress($"Waiting for W600 UART loader ({total.ElapsedMilliseconds / 1000}s)...{failureSummary}", Color.DarkOrange);
 					nextProgress = total.ElapsedMilliseconds + 5000;
 				}
 				Thread.Sleep(250);
@@ -1003,20 +1034,28 @@ namespace BK7231Flasher
 		{
 			byte[] result = new byte[length];
 			int completed = 0;
-			int nextReport = 0x10000;
+			string readProgressText = null;
 			ushort sequence = 0x100;
 			while(completed < length && !isCancelled)
 			{
 				int requestLength = Math.Min(chunkSize, length - completed);
+				uint rangeStart = address + (uint)completed;
+				readProgressText = $"Reading 0x{rangeStart - FlashBase:X6}...";
+				logger.setLogProgress(readProgressText, Color.Black);
 				byte[] payload = null;
 				string lastError = "no response";
 				bool ok = false;
 				for(int attempt = 1; attempt <= 3 && !isCancelled; attempt++)
 				{
 					ok = TryHelperCommand(ProtocolRead, sequence, address + (uint)completed,
-						(ushort)requestLength, 3000, false, out payload, out lastError, out _);
+						(ushort)requestLength, CalculateReadResponseTimeoutMs(requestLength), false,
+						out payload, out lastError);
 					if(ok)
 						break;
+					addLogLine($"W600 UART read attempt {attempt}/3 failed at " +
+						$"0x{address + (uint)completed:X8}: {lastError}");
+					if(attempt < 3)
+						DrainHelperResponseTail(CalculateReadResponseTimeoutMs(requestLength));
 				}
 				if(!ok)
 				{
@@ -1029,31 +1068,105 @@ namespace BK7231Flasher
 				completed += payload.Length;
 				sequence++;
 				logger.setProgress(completed, length);
-				if(completed == length)
-				{
-					logger.setLogProgress($"Reading W600 flash: 0x{completed:X6}/0x{length:X6}. Done." + Environment.NewLine, Color.Green);
-				}
-				else if(completed >= nextReport)
-				{
-					logger.setLogProgress($"Reading W600 flash: 0x{completed:X6}/0x{length:X6}...", Color.Black);
-					nextReport = completed + 0x10000;
-				}
 			}
 			if(isCancelled)
 			{
 				addLogLine("W600 flash read cancelled.");
 				return null;
 			}
+			if(readProgressText != null)
+				logger.setLogProgress(readProgressText + Environment.NewLine, Color.Green);
 			return result;
+		}
+
+		private void LogHelperFlashInfo()
+		{
+			if(!TryHelperCommand(ProtocolFlashId, 0xFFE0, 0, 0, 750, false,
+				out byte[] payload, out string error))
+			{
+				addWarningLine("W600 flash JEDEC ID unavailable: " + error + ".");
+				return;
+			}
+			if(payload.Length != 4)
+			{
+				addWarningLine($"W600 flash JEDEC ID returned {payload.Length}/4 bytes.");
+				return;
+			}
+			int jedecId = (int)(ReadUInt32(payload, 0) & 0x00FFFFFFu);
+			if(jedecId == 0 || jedecId == 0x00FFFFFF)
+			{
+				addWarningLine($"W600 flash returned invalid JEDEC ID 0x{jedecId:X6}.");
+				return;
+			}
+
+			int capacityExponent = (jedecId >> 16) & 0xff;
+			int capacity = capacityExponent >= 10 && capacityExponent < 31
+				? 1 << capacityExponent
+				: 0;
+			SPIFlashInfo flashInfo = SPIFlashInfoList.Singleton.findFlashForMID(jedecId);
+			if(flashInfo != null)
+			{
+				int reportedSize = capacity != 0 ? capacity : flashInfo.szMem;
+				addSuccess(FormatFlashInfo(jedecId, flashInfo.manufacturer, reportedSize) + Environment.NewLine);
+				if(capacity != 0 && flashInfo.szMem != capacity)
+				{
+					addWarningLine("JEDEC flash size differs from flash list size: JEDEC=" +
+						capacity.ToString("X") + ", list=" + flashInfo.szMem.ToString("X") + ".");
+				}
+			}
+			else if(capacity != 0)
+			{
+				addWarningLine(FormatFlashInfo(jedecId, "unknown", capacity));
+			}
+			else
+			{
+				string jedecDisplay = string.Format("{0:X2}-{1:X2}-{2:X2}",
+					jedecId & 0xff, (jedecId >> 8) & 0xff, (jedecId >> 16) & 0xff);
+				addWarningLine("Flash info: JEDEC ID " + jedecDisplay +
+					", Manufacturer unknown, size unknown.");
+			}
+			if(capacity != 0 && capacity != FlashSize)
+			{
+				addWarningLine($"W600 backup remains limited to 1 MiB; JEDEC reports 0x{capacity:X} bytes.");
+			}
+		}
+
+		private int CalculateReadResponseTimeoutMs(int payloadLength)
+		{
+			long framedBytes = ProtocolResponseSize + (long)payloadLength;
+			long wireMilliseconds = (framedBytes * 10L * 1000L + baudrate - 1L) / baudrate;
+			long preparationMilliseconds = ((payloadLength + 1023L) / 1024L) *
+				ReadPreparationPerKiBMs;
+			return (int)Math.Max(MinimumReadResponseTimeoutMs,
+				wireMilliseconds + preparationMilliseconds + ReadResponseTimeoutMarginMs);
+		}
+
+		private void DrainHelperResponseTail(int timeoutMs)
+		{
+			Stopwatch total = Stopwatch.StartNew();
+			long idleSince = -1;
+			while(total.ElapsedMilliseconds < timeoutMs && !isCancelled)
+			{
+				if(serial.BytesToRead > 0)
+				{
+					serial.DiscardInBuffer();
+					idleSince = -1;
+					continue;
+				}
+				if(idleSince < 0)
+					idleSince = total.ElapsedMilliseconds;
+				else if(total.ElapsedMilliseconds - idleSince >= RetryReceiveIdleMs)
+					return;
+				Thread.Sleep(1);
+			}
 		}
 
 		private bool TryHelperCommand(byte opcode, ushort sequence, uint address,
 			ushort length, int timeoutMs, bool ignoreCancellation,
-			out byte[] payload, out string error, out bool startupBeaconSeen)
+			out byte[] payload, out string error)
 		{
 			payload = null;
 			error = "response timeout";
-			startupBeaconSeen = false;
 			byte[] request = new byte[ProtocolRequestSize];
 			request[0] = (byte)'W'; request[1] = (byte)'6';
 			request[2] = (byte)'R'; request[3] = (byte)'Q';
@@ -1064,29 +1177,17 @@ namespace BK7231Flasher
 			StoreUInt16(request, 12, length);
 			StoreUInt16(request, 14, CRC16.Compute(CRC16Type.CCITT_FALSE, request, 0, 14));
 
+			byte[] header = new byte[ProtocolResponseSize];
+			serial.DiscardInBuffer();
 			serial.Write(request, 0, request.Length);
 			Stopwatch sw = Stopwatch.StartNew();
-			byte[] header = new byte[ProtocolResponseSize];
 			byte[] magic = new byte[] { (byte)'W', (byte)'6', (byte)'R', (byte)'S' };
 			int matched = 0;
-			int beaconMatched = 0;
-			while(sw.ElapsedMilliseconds < timeoutMs && (ignoreCancellation || !isCancelled) && matched < magic.Length)
+			while(sw.ElapsedMilliseconds < timeoutMs &&
+				(ignoreCancellation || !isCancelled) && matched < magic.Length)
 			{
 				if(!TryReadSerialByte(sw, timeoutMs, ignoreCancellation, out byte value))
 					break;
-				if(value == ReaderProtocolMarker[beaconMatched])
-				{
-					beaconMatched++;
-					if(beaconMatched == ReaderProtocolMarker.Length)
-					{
-						startupBeaconSeen = true;
-						beaconMatched = 0;
-					}
-				}
-				else
-				{
-					beaconMatched = value == ReaderProtocolMarker[0] ? 1 : 0;
-				}
 				if(value == magic[matched])
 				{
 					header[matched++] = value;
@@ -1098,17 +1199,27 @@ namespace BK7231Flasher
 						header[0] = value;
 				}
 			}
-			if(matched != magic.Length || !ReadSerialExact(header, 4, header.Length - 4,
-				sw, timeoutMs, ignoreCancellation))
+			if(matched != magic.Length)
 				return false;
+			if(!ReadSerialExact(header, 4, header.Length - 4, sw, timeoutMs,
+				ignoreCancellation, out int headerBytesRead))
+			{
+				error = $"response-header timeout after {headerBytesRead}/{header.Length - 4} bytes";
+				return false;
+			}
 			if(CRC16.Compute(CRC16Type.CCITT_FALSE, header, 0, 18) != ReadUInt16(header, 18))
 			{
 				error = "response-header CRC mismatch";
 				return false;
 			}
-			if(header[4] != ProtocolVersion || ReadUInt16(header, 6) != sequence)
+			if(header[4] != ProtocolVersion)
 			{
-				error = "response version or sequence mismatch";
+				error = "response version mismatch";
+				return false;
+			}
+			if(ReadUInt16(header, 6) != sequence)
+			{
+				error = "response sequence mismatch";
 				return false;
 			}
 			if(header[5] != 0)
@@ -1123,23 +1234,26 @@ namespace BK7231Flasher
 				error = "response range mismatch";
 				return false;
 			}
-			payload = new byte[responseLength];
-			if(!ReadSerialExact(payload, 0, payload.Length, sw, timeoutMs, ignoreCancellation))
+			byte[] receivedPayload = new byte[responseLength];
+			if(!ReadSerialExact(receivedPayload, 0, receivedPayload.Length, sw, timeoutMs,
+				ignoreCancellation, out int payloadBytesRead))
 			{
-				error = "response payload timeout";
+				error = $"response payload timeout after {payloadBytesRead}/{receivedPayload.Length} bytes";
 				return false;
 			}
-			uint expectedCrc = ReadUInt32(header, 14);
-			uint actualCrc = ~CRC.crc32_ver2(0xFFFFFFFF, payload);
-			if(expectedCrc != actualCrc)
+			uint expectedPayloadCrc = ReadUInt32(header, 14);
+			uint actualPayloadCrc = ~CRC.crc32_ver2(0xFFFFFFFF, receivedPayload);
+			if(expectedPayloadCrc != actualPayloadCrc)
 			{
 				error = "response payload CRC mismatch";
 				return false;
 			}
+			payload = receivedPayload;
 			return true;
 		}
 
-		private bool TryReadSerialByte(Stopwatch sw, int timeoutMs, bool ignoreCancellation, out byte value)
+		private bool TryReadSerialByte(Stopwatch sw, int timeoutMs, bool ignoreCancellation,
+			out byte value)
 		{
 			while(sw.ElapsedMilliseconds < timeoutMs && (ignoreCancellation || !isCancelled))
 			{
@@ -1155,15 +1269,24 @@ namespace BK7231Flasher
 		}
 
 		private bool ReadSerialExact(byte[] destination, int offset, int length,
-			Stopwatch sw, int timeoutMs, bool ignoreCancellation)
+			Stopwatch sw, int timeoutMs, bool ignoreCancellation, out int bytesRead)
 		{
-			for(int i = 0; i < length; i++)
+			bytesRead = 0;
+			while(bytesRead < length && sw.ElapsedMilliseconds < timeoutMs &&
+				(ignoreCancellation || !isCancelled))
 			{
-				if(!TryReadSerialByte(sw, timeoutMs, ignoreCancellation, out byte value))
-					return false;
-				destination[offset + i] = value;
+				int available = serial.BytesToRead;
+				if(available <= 0)
+				{
+					Thread.Sleep(1);
+					continue;
+				}
+				int requested = Math.Min(available, length - bytesRead);
+				int received = serial.Read(destination, offset + bytesRead, requested);
+				if(received > 0)
+					bytesRead += received;
 			}
-			return true;
+			return bytesRead == length;
 		}
 
 		private static ushort ReadUInt16(byte[] data, int offset)

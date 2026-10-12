@@ -254,8 +254,8 @@ namespace BK7231Flasher
 
 		void StartLoader(out byte[] loader, out byte[] stage)
 		{
-			loader = FLoaders.GetBinaryFromAssembly("SV6x66_Loader");
-			stage = FLoaders.GetBinaryFromAssembly("SV6x66_FlashAgent");
+			loader = FLoaders.GetBinaryFromAssembly("SV6x66_Stub_stage1");
+			stage = FLoaders.GetBinaryFromAssembly("SV6x66_Stub");
 			using (SHA256 sha = SHA256.Create()) {
 				if (HexDigest(sha, loader) != LoaderSha256)
 					throw new InvalidDataException("Embedded SV6x66 loader SHA-256 mismatch");
