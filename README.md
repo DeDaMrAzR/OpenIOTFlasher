@@ -32,7 +32,7 @@ Supported GUI-selectable chip/platform modes:
   - GD32VW553
 - Generic SPI CH341
 - iComm Semi:
-  - CKW04/SV6x66 (experimental read-only)
+  - SV6x66/CKW04 (experimental read-only)
 - Lightning Semi:
   - LN882H
   - LN8825
