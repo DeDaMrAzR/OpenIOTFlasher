@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 
@@ -70,15 +71,16 @@ namespace BK7231Flasher
 
         public static void Run(string[] args)
         {
-            // Attach to parent console or allocate a new one for output
-            if (!AttachConsole(ATTACH_PARENT_PROCESS))
-            {
-                AllocConsole();
+			bool outputRedirected = Console.IsOutputRedirected;
+			bool errorRedirected = Console.IsErrorRedirected;
+			if (!outputRedirected && !errorRedirected)
+			{
+				// Direct interactive launch: attach to the caller's console or allocate one.
+				if (!AttachConsole(ATTACH_PARENT_PROCESS))
+					AllocConsole();
+				Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+				Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
             }
-
-            // Re-open stdout/stderr after attaching console
-            Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
-            Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
 
             Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
             Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
@@ -96,8 +98,10 @@ namespace BK7231Flasher
             int len = -1;
             string outputName = "cliBackup";
             string writeFile = null;
-            bool legacyMode = false;
-			bool acknowledgeCkw04BankBOverwrite = false;
+			bool legacyMode = false;
+			bool acknowledgeSv6x66BankBOverwrite = false;
+			bool sv6x66RestoreDiagnostics = false;
+			bool acknowledgeSv6x66FullRestore = false;
             string tuyaInputFile = null;
             string tuyaOutputFile = null;
 
@@ -171,8 +175,14 @@ namespace BK7231Flasher
                     case "-legacy":     // legacy alias
                         legacyMode = true;
                         break;
-					case "--ack-ckw04-bank-b-overwrite":
-						acknowledgeCkw04BankBOverwrite = true;
+					case "--ack-sv6x66-bank-b-overwrite":
+						acknowledgeSv6x66BankBOverwrite = true;
+						break;
+					case "--sv6x66-restore-diagnostics":
+						sv6x66RestoreDiagnostics = true;
+						break;
+					case "--ack-sv6x66-full-restore":
+						acknowledgeSv6x66FullRestore = true;
 						break;
                     case "--help":
                     case "-help":
@@ -184,7 +194,7 @@ namespace BK7231Flasher
                         Console.Error.WriteLine($"Unknown argument: {args[i]}");
                         break;
                 }
-            }
+			}
 
             if (operation == CliOperation.Help || operation == CliOperation.None)
             {
@@ -206,31 +216,6 @@ namespace BK7231Flasher
                 int tuyaExitCode = DoTuyaConfig(tuyaInputFile, tuyaOutputFile);
                 Environment.Exit(tuyaExitCode);
                 return;
-            }
-
-            // Validate required arguments
-            if (string.IsNullOrEmpty(port))
-            {
-                // Port is required for serial chips, but not for SPI chips
-                BKType testType = BKType.Invalid;
-                if (!string.IsNullOrEmpty(chipName))
-                    Enum.TryParse(chipName, true, out testType);
-                if (testType != BKType.BekenSPI && testType != BKType.GenericSPI)
-                {
-                    Console.WriteLine("[AutoSelect] No port argument, attempting auto-selection...");
-                    port = GetFirstAvailablePort();
-                    if (port != null)
-                    {
-                        Console.WriteLine($"No port specified, auto-selected: {port}");
-                        Thread.Sleep(500); // Give time for port to close properly
-                    }
-                    else
-                    {
-                        Console.Error.WriteLine("Error: --port is required. Use --help for usage.");
-                        Environment.Exit(1);
-                        return;
-                    }
-                }
             }
 
             if (string.IsNullOrEmpty(chipName))
@@ -260,6 +245,7 @@ namespace BK7231Flasher
                 // BL618 uses the BL616 bootrom-compatible flow in this tool.
                 chipName = nameof(BKType.BL616);
             }
+
             BKType chipType;
             if (!Enum.TryParse(chipName, true, out chipType) || chipType == BKType.Invalid || chipType == BKType.Detect)
             {
@@ -273,6 +259,53 @@ namespace BK7231Flasher
                 Environment.Exit(1);
                 return;
             }
+
+			if (!ValidateSv6x66Arguments(operation, baud, chipType,
+				acknowledgeSv6x66BankBOverwrite, acknowledgeSv6x66FullRestore))
+			{
+				Environment.Exit(1);
+				return;
+			}
+
+			if (sv6x66RestoreDiagnostics && (chipType != BKType.SV6X66 || operation != CliOperation.Write))
+			{
+				Console.Error.WriteLine("--sv6x66-restore-diagnostics requires SV6X66 fwrite.");
+				Environment.Exit(1);
+				return;
+			}
+
+			byte[] sv6x66RestoreImage = null;
+			string sv6x66RestoreSha256 = null;
+			if (chipType == BKType.SV6X66 && operation == CliOperation.Write)
+			{
+				string preparedPath;
+				if (!TryPrepareSv6x66RestoreInput(writeFile, out preparedPath,
+					out sv6x66RestoreImage, out sv6x66RestoreSha256))
+				{
+					Environment.Exit(1);
+					return;
+				}
+				writeFile = preparedPath;
+			}
+
+            // Validate required arguments after all pre-serial safety gates.
+            if (string.IsNullOrEmpty(port) &&
+                chipType != BKType.BekenSPI && chipType != BKType.GenericSPI)
+            {
+                Console.WriteLine("[AutoSelect] No port argument, attempting auto-selection...");
+                port = GetFirstAvailablePort();
+                if (port != null)
+                {
+                    Console.WriteLine($"No port specified, auto-selected: {port}");
+                    Thread.Sleep(500); // Give time for port to close properly
+                }
+                else
+                {
+                    Console.Error.WriteLine("Error: --port is required. Use --help for usage.");
+                    Environment.Exit(1);
+                    return;
+                }
+            }
             if (Requires4KAlignedRange(chipType)
                 && (operation == CliOperation.CustomRead || operation == CliOperation.CustomWrite || operation == CliOperation.Test)
                 && ((ofs % BK7231Flasher.SECTOR_SIZE) != 0 || (len % BK7231Flasher.SECTOR_SIZE) != 0))
@@ -283,28 +316,14 @@ namespace BK7231Flasher
             }
 
 			int exitCode = ExecuteOperation(operation, port ?? "", baud, chipType, ofs, len, outputName, writeFile,
-				legacyMode, acknowledgeCkw04BankBOverwrite);
+				legacyMode, sv6x66RestoreImage, sv6x66RestoreSha256, sv6x66RestoreDiagnostics);
             Environment.Exit(exitCode);
         }
 
-        static int ExecuteOperation(CliOperation operation, string port, int baud, BKType chipType,
+		static int ExecuteOperation(CliOperation operation, string port, int baud, BKType chipType,
 			int ofs, int len, string outputName, string writeFile, bool legacyMode,
-			bool acknowledgeCkw04BankBOverwrite)
+			byte[] sv6x66RestoreImage, string sv6x66RestoreSha256, bool sv6x66RestoreDiagnostics)
         {
-			if (chipType == BKType.SV6X66)
-			{
-				if (operation != CliOperation.Read)
-				{
-					Console.Error.WriteLine("Error: CKW04/SV6x66 currently supports full flash read only.");
-					return 1;
-				}
-				if (!acknowledgeCkw04BankBOverwrite)
-				{
-					Console.Error.WriteLine("Error: CKW04/SV6x66 fread erases and replaces inactive Bank B before reading.");
-					Console.Error.WriteLine("Re-run with --ack-ckw04-bank-b-overwrite only if you accept that mutation.");
-					return 1;
-				}
-			}
             var logger = new ConsoleLogListener();
             var cts = new CancellationTokenSource();
 
@@ -317,8 +336,13 @@ namespace BK7231Flasher
             };
 
             BaseFlasher flasher = CreateFlasher(chipType, cts.Token);
+			if (flasher is SV6x66Flasher sv6x66DiagnosticsTarget)
+			{
+				sv6x66DiagnosticsTarget.RestoreDiagnosticsEnabled = sv6x66RestoreDiagnostics;
+				sv6x66DiagnosticsTarget.TechnicalLoggingEnabled = true;
+			}
             flasher.setBasic(logger, port, chipType, baud);
-            if (flasher is ESPFlasher espFlasher)
+			if (flasher is ESPFlasher espFlasher)
             {
                 espFlasher.LegacyMode = legacyMode;
             }
@@ -330,8 +354,9 @@ namespace BK7231Flasher
                     case CliOperation.Read:
                         return DoRead(flasher, chipType, outputName);
 
-                    case CliOperation.Write:
-                        return DoWrite(flasher, chipType, writeFile);
+					case CliOperation.Write:
+						return DoWrite(flasher, chipType, writeFile,
+							sv6x66RestoreImage, sv6x66RestoreSha256);
 
                     case CliOperation.CustomRead:
                         return DoCustomRead(flasher, chipType, ofs, len, outputName);
@@ -359,9 +384,16 @@ namespace BK7231Flasher
             }
         }
 
-        static int DoRead(BaseFlasher flasher, BKType chipType, string outputName)
-        {
-            Console.WriteLine("Starting full flash read...");
+		static int DoRead(BaseFlasher flasher, BKType chipType, string outputName)
+		{
+			if (chipType == BKType.SV6X66)
+			{
+				Console.WriteLine("Starting staged SV6x66 full backup.");
+			}
+			else
+			{
+				Console.WriteLine("Starting full flash read...");
+			}
 
             flasher.setBackupName(outputName);
 
@@ -380,9 +412,13 @@ namespace BK7231Flasher
                 sectors = BK7231Flasher.FLASH_SIZE / BK7231Flasher.SECTOR_SIZE;
             }
 
-            flasher.doRead(startSector, sectors, true);
-
-            if (flasher.saveReadResult(startSector))
+			flasher.doRead(startSector, sectors, true);
+			if (flasher is SV6x66Flasher sv6x66Flasher && !sv6x66Flasher.LastOperationSucceeded)
+			{
+				Console.Error.WriteLine("\nSV6x66 backup failed before a verified result was available; no file was saved.");
+				return 1;
+			}
+			if (flasher.saveReadResult(startSector))
             {
                 Console.WriteLine("\nRead completed successfully.");
                 return 0;
@@ -394,9 +430,32 @@ namespace BK7231Flasher
             }
         }
 
-        static int DoWrite(BaseFlasher flasher, BKType chipType, string writeFile)
-        {
-            if (!File.Exists(writeFile))
+		static int DoWrite(BaseFlasher flasher, BKType chipType, string writeFile,
+			byte[] sv6x66RestoreImage, string sv6x66RestoreSha256)
+		{
+			if (chipType == BKType.SV6X66)
+			{
+				SV6x66Flasher sv6x66Flasher = flasher as SV6x66Flasher;
+				if (sv6x66Flasher == null || sv6x66RestoreImage == null
+					|| string.IsNullOrEmpty(sv6x66RestoreSha256))
+				{
+					Console.Error.WriteLine("Error: SV6x66 full-restore input was not prepared before serial access.");
+					return 1;
+				}
+
+				Console.WriteLine($"Starting gated SV6x66 full restore from {writeFile} (SHA-256 {sv6x66RestoreSha256})...");
+				sv6x66Flasher.doRestoreFullBackup(writeFile,
+					sv6x66RestoreImage, sv6x66RestoreSha256);
+				if (!sv6x66Flasher.LastOperationSucceeded)
+				{
+					Console.Error.WriteLine("\nSV6x66 full restore failed.");
+					return 1;
+				}
+				Console.WriteLine("\nSV6x66 full restore completed successfully.");
+				return 0;
+			}
+
+			if (!File.Exists(writeFile))
             {
                 Console.Error.WriteLine($"Error: File not found: {writeFile}");
                 return 1;
@@ -447,10 +506,83 @@ namespace BK7231Flasher
                 case BKType.BK7252N:
                 case BKType.BK7258:
                     return true;
-                default:
-                    return false;
-            }
-        }
+				default:
+					return false;
+			}
+		}
+
+		static bool IsSupportedSv6x66Baud(int baud)
+		{
+			return baud == 115200 || baud == 230400 || baud == 460800 ||
+				baud == 921600 || baud == 1500000 || baud == 2000000;
+		}
+
+		static bool ValidateSv6x66Arguments(CliOperation operation, int baud,
+			BKType chipType, bool acknowledgeBankBOverwrite,
+			bool acknowledgeFullRestore)
+		{
+			if (chipType != BKType.SV6X66)
+				return true;
+			if (!IsSupportedSv6x66Baud(baud))
+			{
+				Console.Error.WriteLine("Error: SV6x66 baud must be one of 115200, 230400, 460800, 921600, 1500000, or 2000000.");
+				return false;
+			}
+			if (operation == CliOperation.Read && !acknowledgeBankBOverwrite)
+			{
+				Console.Error.WriteLine("Error: SV6x66 staged backup erases and replaces inactive Bank B before reading flash.");
+				Console.Error.WriteLine("Re-run with --ack-sv6x66-bank-b-overwrite only if you accept that mutation.");
+				return false;
+			}
+			if (operation == CliOperation.Write && !acknowledgeFullRestore)
+			{
+				Console.Error.WriteLine("Error: SV6x66 fwrite overwrites the complete 2 MiB flash, including boot-critical data.");
+				Console.Error.WriteLine("Re-run with --ack-sv6x66-full-restore only if you accept that destructive restore.");
+				return false;
+			}
+			if (operation == CliOperation.Read || operation == CliOperation.Write)
+				return true;
+			Console.Error.WriteLine("Error: SV6x66 custom writes and generic test operations remain disabled; use only gated fread or fwrite.");
+			return false;
+		}
+
+		static bool TryPrepareSv6x66RestoreInput(string writeFile,
+			out string fullPath, out byte[] image, out string sha256)
+		{
+			fullPath = null;
+			image = null;
+			sha256 = null;
+			try
+			{
+				fullPath = Path.GetFullPath(writeFile ?? "");
+				if (!File.Exists(fullPath))
+				{
+					Console.Error.WriteLine($"Error: SV6x66 restore source does not exist: {fullPath}");
+					return false;
+				}
+				if (new FileInfo(fullPath).Length != 0x200000)
+				{
+					Console.Error.WriteLine("Error: SV6x66 restore source must be exactly 2097152 bytes.");
+					return false;
+				}
+				image = File.ReadAllBytes(fullPath);
+				if (image.Length != 0x200000)
+				{
+					Console.Error.WriteLine("Error: SV6x66 restore source changed while being read.");
+					return false;
+				}
+				using (SHA256 hash = SHA256.Create())
+					sha256 = string.Concat(hash.ComputeHash(image)
+						.Select(value => value.ToString("X2")));
+				return true;
+			}
+			catch (Exception exception)
+			{
+				Console.Error.WriteLine("Error: Unable to prepare SV6x66 restore source before serial access: "
+					+ exception.Message);
+				return false;
+			}
+		}
 
         static bool Requires4KAlignedRange(BKType chipType)
         {
@@ -777,13 +909,18 @@ namespace BK7231Flasher
             Console.WriteLine("  --addr <0x11000>       Start address (hex or decimal, for read_flash/write_flash)");
             Console.WriteLine("  --size <0x1000>        Length in bytes (hex or decimal, for read_flash/write_flash)");
             Console.WriteLine("  --out <name>           Output name for backup (default: cliBackup)");
-			Console.WriteLine("  --ack-ckw04-bank-b-overwrite");
-			Console.WriteLine("                         Required for CKW04/SV6x66 fread; staging replaces Bank B");
+			Console.WriteLine("  --ack-sv6x66-bank-b-overwrite");
+			Console.WriteLine("                         Required for SV6x66 staged backup; staging replaces Bank B");
+			Console.WriteLine("  --ack-sv6x66-full-restore");
+			Console.WriteLine("                         Required only for SV6x66 fwrite; overwrites the complete 2 MiB flash");
+			Console.WriteLine("  --sv6x66-restore-diagnostics  SV6X66 fwrite only: include internal result and phase timing records.");
             Console.WriteLine("  --no-stub              Use legacy (ROM-only) mode for ESP8266/ESP32 family chips (disable stub flasher)");
             Console.WriteLine();
             Console.WriteLine("Examples:");
             Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N fread --out mybackup");
-            Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N fwrite firmware.bin");
+			Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N fwrite firmware.bin");
+			Console.WriteLine("  OpenIOT_flasher.exe --port COM5 --chip SV6X66 --baud 115200 --ack-sv6x66-bank-b-overwrite fread --out sv6_backup");
+			Console.WriteLine("  OpenIOT_flasher.exe --port COM5 --chip SV6X66 --baud 115200 --ack-sv6x66-full-restore fwrite backups\\readResult_SV6X66_device.bin");
             Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N read_flash --addr 0x11000 --size 0x1000");
             Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N write_flash data.bin --addr 0x0 --size 0x1000");
             Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N test --addr 0x11000 --size 0x1000");

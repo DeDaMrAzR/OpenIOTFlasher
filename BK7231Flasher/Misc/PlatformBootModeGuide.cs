@@ -49,7 +49,7 @@ namespace BK7231Flasher
 
 		static string GetSv6x66Instructions()
 		{
-			return "Connect one 3.3 V USB-to-TTL UART to the CKW04 product/factory port:" + System.Environment.NewLine +
+			return "Connect one 3.3 V USB-to-TTL UART to the SV6x66 product/factory port:" + System.Environment.NewLine +
 				"- Adapter RX -> SV6166F GPIO7 / TXD1" + System.Environment.NewLine +
 				"- Adapter TX -> SV6166F GPIO6 / RXD1" + System.Environment.NewLine +
 				"- Adapter GND -> target GND" + System.Environment.NewLine +

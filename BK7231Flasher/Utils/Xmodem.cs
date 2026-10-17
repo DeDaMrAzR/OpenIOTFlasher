@@ -41,8 +41,121 @@ using System.Collections.Generic;
 
 namespace BK7231Flasher
 {
+	internal sealed class SenderCompletionCoordinator
+	{
+		readonly object gate;
+		long generation;
+		bool active;
+		bool completed = true;
+
+		internal SenderCompletionCoordinator(object gate) { this.gate = gate; }
+		internal long Begin()
+		{
+			lock (gate)
+			{
+				if (!completed) throw new InvalidOperationException("Previous sender cleanup is incomplete.");
+				generation++;
+				active = true;
+				completed = false;
+				return generation;
+			}
+		}
+		internal bool Run(long token, Action action)
+		{
+			lock (gate)
+			{
+				if (!active || token != generation) return false;
+				action();
+				return true;
+			}
+		}
+		internal void Stop(long token, Action notify)
+		{
+			lock (gate)
+			{
+				if (!active || token != generation) return;
+				active = false;
+				notify();
+			}
+		}
+		internal void Complete(long token, Action cleanup)
+		{
+			lock (gate)
+			{
+				if (token != generation || completed) return;
+				active = false;
+				try { cleanup(); }
+				finally { completed = true; }
+			}
+		}
+	}
+
     public class XMODEM
     {
+		public bool WorkerOwnedSenderCleanup { get; set; }
+		public bool BatchSenderPackets { get; set; }
+		public bool PreserveSenderInitiation { get; set; }
+		internal sealed class SenderTimingStatistics
+		{
+			internal int Count, Failed;
+			internal long Total, Minimum = long.MaxValue, Maximum, FirstStart, LastEnd;
+			internal void Record(long start, long end, bool failed)
+			{
+				if (Count == 0) FirstStart = start;
+				Count++;
+				if (failed) Failed++;
+				long elapsed = end - start;
+				Total += elapsed;
+				Minimum = Math.Min(Minimum, elapsed);
+				Maximum = Math.Max(Maximum, elapsed);
+				LastEnd = end;
+			}
+		}
+		internal SenderTimingStatistics PacketWriteTiming { get; private set; }
+		internal SenderTimingStatistics PacketAckWaitTiming { get; private set; }
+		internal SenderTimingStatistics EotWriteTiming { get; private set; }
+		internal SenderTimingStatistics EotAckWaitTiming { get; private set; }
+		SenderCompletionCoordinator senderCompletion;
+		volatile bool ownedSenderActive;
+		long ownedSenderGeneration;
+		SerialDataReceivedEventHandler ownedSenderHandler;
+		Exception senderCallbackFailure;
+		bool ownedSenderCancellation;
+		bool ownedSenderReleased;
+		internal long OwnedSenderGeneration => ownedSenderGeneration;
+		internal void InitializeOwnedSender()
+		{
+			ownedSenderReleased = false;
+			ownedSenderGeneration = senderCompletion.Begin();
+			ownedSenderActive = true;
+			ownedSenderCancellation = false;
+			senderCallbackFailure = null;
+		}
+		internal void RunOwnedSenderCallback(long generation, Action callback)
+		{
+			senderCompletion.Run(generation, () => {
+				try { callback(); }
+				catch (Exception exception) { senderCallbackFailure = exception; Abort(); }
+			});
+		}
+		internal void ThrowOwnedSenderCallbackFailure()
+		{
+			if (senderCallbackFailure != null)
+				System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(senderCallbackFailure).Throw();
+		}
+		internal void CompleteOwnedSender(Action cleanup, bool primaryFailure)
+		{
+			lock (ReceiverStateLock)
+			{
+				try { senderCompletion.Complete(ownedSenderGeneration, cleanup); }
+				catch when (primaryFailure) { }
+				finally
+				{
+					ownedSenderActive = false;
+					if (!ownedSenderReleased) { ownedSenderReleased = true; InProgress.Release(); }
+				}
+			}
+		}
         // TERMINAL PROGRAM OBSERVATIONS:
         //
         // TeraTerm UTF-8 Pro:
@@ -112,6 +225,11 @@ namespace BK7231Flasher
         /// already configured for XModem-Checksum.
         /// </summary>
         public bool ReceiverFallBackAllowed = true;
+
+		/// <summary>
+		/// When true, EOT/EOF is accepted only after at least one valid data packet.
+		/// </summary>
+		public bool ReceiverRequireAcceptedDataBeforeEndOfFile = false;
 
         /// <summary>
         /// If the Receiver is expecting data from the Sender, this is the maximum amount of time it will wait before sending NAK to prompt 
@@ -262,6 +380,7 @@ namespace BK7231Flasher
             // Property Initialization
             Port = port;
             Variant = variant;
+			senderCompletion = new SenderCompletionCoordinator(ReceiverStateLock);
         }
 
         /// <summary>
@@ -270,6 +389,17 @@ namespace BK7231Flasher
         /// </summary>
         public void CancelFileTransfer()
         {
+			if (WorkerOwnedSenderCleanup && !ownedSenderActive && CurrentState == States.Inactive)
+				return;
+			if (ownedSenderActive)
+			{
+				senderCompletion.Run(ownedSenderGeneration, () => {
+					ownedSenderCancellation = true;
+					_TerminationReason = TerminationReasonEnum.UserCancelled;
+					Abort();
+				});
+				return;
+			}
             // Abort what we're currently doing
             Abort();
 
@@ -441,6 +571,8 @@ namespace BK7231Flasher
             DataPacketNumBytesStored = 0;
             ExpectingFirstPacket = true;
             ValidPacketReceived = false;
+			ReceiverAcceptedPacketCount = 0;
+			ReceiverAwaitingRetransmission = false;
             YModemFileSize = -1;
             YModemBytesReceived = 0;
             YModemReceivedFileName = null;
@@ -558,9 +690,13 @@ namespace BK7231Flasher
             SerialPort sp = sender as SerialPort;
             int numBytes = sp.BytesToRead;
             byte[] recv = new byte[numBytes];
-            sp.Read(recv, 0, numBytes);
+			int bytesRead = sp.Read(recv, 0, numBytes);
+			if (bytesRead <= 0)
+				return;
+			if (bytesRead != recv.Length)
+				Array.Resize(ref recv, bytesRead);
 
-            if (numBytes > 0)
+			if (bytesRead > 0)
             {
                 switch (CurrentState)
                 {
@@ -622,11 +758,16 @@ namespace BK7231Flasher
                             if (Array.IndexOf(recv, ACK) > -1)
                             {
                                 // ACK received
+								if (PreserveSenderInitiation)
+									AcceptSenderPacketAcknowledgement();
+								else
+								{
                                 ResetSenderPacketResponseWatchdog();
                                 _SenderConsecutiveRetryAttempts = 0;
                                 PacketSuccessfullySent = true;
                                 _BlockNumToSend += 1;
                                 WaitForResponseFromReceiver.Set();
+								}
                             }
                             else if (Array.IndexOf(recv, NAK) > -1)
                             {
@@ -702,7 +843,7 @@ namespace BK7231Flasher
                     DataPacketNumBytesStored = 0;
                     ErrorCheck = null;
                     ValidPacketReceived = false;
-                    Port.DiscardInBuffer();
+					ReceiverAwaitingRetransmission = true;
                 }
                 SendNAK();
             }
@@ -760,6 +901,8 @@ namespace BK7231Flasher
 
         // Keeps track of the number of bytes actually placed inside the current data packet
         private int DataPacketNumBytesStored = 0;
+		private int ReceiverAcceptedPacketCount = 0;
+		private bool ReceiverAwaitingRetransmission = false;
 
         // Stores the check value. This will contain 1 byte for XModem-Checksum, and 2 bytes for XModem-CRC or XModem-1K.
         private byte[] ErrorCheck;
@@ -793,8 +936,16 @@ namespace BK7231Flasher
                         Remainder = new byte[0];
 
                     // Check for file termination tokens
-                    if (BytesToParse[headerByteSearchStartIndex] == EOT ||
-                        BytesToParse[headerByteSearchStartIndex] == EOF)
+					bool isEndOfFileToken = BytesToParse[headerByteSearchStartIndex] == EOT ||
+						BytesToParse[headerByteSearchStartIndex] == EOF;
+					bool isEndOfFileSequence = isEndOfFileToken;
+					for (int index = headerByteSearchStartIndex + 1;
+						isEndOfFileSequence && index < BytesToParse.Length; index++)
+						isEndOfFileSequence = BytesToParse[index] == BytesToParse[headerByteSearchStartIndex];
+					bool acceptedDataRequirementMet = !ReceiverRequireAcceptedDataBeforeEndOfFile ||
+						ReceiverAcceptedPacketCount > 0;
+					if (isEndOfFileSequence && acceptedDataRequirementMet &&
+						!ReceiverAwaitingRetransmission)
                     {
                         SendACK();
                         Abort();
@@ -1137,6 +1288,7 @@ namespace BK7231Flasher
                 }
 
                 YModemBytesReceived = 0;
+				ReceiverAwaitingRetransmission = false;
 
                 ValidPacketReceived = false;
 
@@ -1168,6 +1320,8 @@ namespace BK7231Flasher
                     {
                         AllDataReceivedBuffer?.Write(DataPacketReceived, 0, bytesToStore);
                     }
+					ReceiverAcceptedPacketCount += 1;
+					ReceiverAwaitingRetransmission = false;
                     YModemBytesReceived += bytesToStore;
                     ValidPacketReceived = bytesToStore > 0;
                     SendACK();
@@ -1183,6 +1337,7 @@ namespace BK7231Flasher
                 // Receiver got a duplicate packet.
                 // Send <ACK> to prompt the Sender to advance to the next packet. Ignore the current (redundant) packet.
                 SendACK();
+				ReceiverAwaitingRetransmission = false;
                 ValidPacketReceived = false;
                 return true;
             }
@@ -1195,8 +1350,9 @@ namespace BK7231Flasher
 
         private bool RejectPacket()
         {
-            // Remove the rejected packet's unread tail before the sender retransmits it.
-            Port.DiscardInBuffer();
+			// Keep queued bytes intact. Discarding them can make the next callback begin in
+			// the middle of an in-flight payload and turn a data byte into a false header.
+			ReceiverAwaitingRetransmission = true;
             SendNAK();
             ValidPacketReceived = false;
             return false;
@@ -1278,13 +1434,30 @@ namespace BK7231Flasher
         /// </summary>
         internal void Abort()
         {
+			if (ownedSenderActive)
+			{
+				senderCompletion.Stop(ownedSenderGeneration, () => {
+					CurrentState = States.Inactive;
+					TerminateSend = true;
+					SenderInitialized = false;
+					Aborted = true;
+					WaitForResponseFromReceiver.Set();
+				});
+				return;
+			}
+			AbortCore();
+		}
+
+		void AbortCore()
+		{
             CurrentState = States.Inactive;
             TerminateSend = true;
             SenderInitialized = false;
             Aborted = true;
 
             // Detach event handler
-            Port.DataReceived -= Port_DataReceived;
+			if (Port != null)
+				Port.DataReceived -= Port_DataReceived;
 
             // If we are sending data, tell Sender not to expect any more responses from Receiver.
             // This has no ill effect if we are receiving instead.
@@ -1311,7 +1484,7 @@ namespace BK7231Flasher
             }
             catch(ObjectDisposedException) { }
             // Flush serial data so they don't contaminate a future session
-            if(Port.IsOpen)
+			if(Port != null && Port.IsOpen)
             {
                 Port.DiscardInBuffer();
                 Port.DiscardOutBuffer();
@@ -1394,6 +1567,29 @@ namespace BK7231Flasher
         /// </returns>
         public int Send(byte[] dataToSend = null, uint offset = 0, bool instant = false)
         {
+			bool owned = WorkerOwnedSenderCleanup;
+			if (PreserveSenderInitiation && (!owned || _Variant != Variants.XModem1K || dataToSend == null || instant))
+				throw new InvalidOperationException("Preserving initiation requires an owned complete XMODEM-1K send.");
+			if (BatchSenderPackets && (!owned || _Variant != Variants.XModem1K ||
+				(ExtraHeaderBytes != null && ExtraHeaderBytes.Length != 0) || DoNotWaitForEndOfFileAcknowledgement))
+				throw new NotSupportedException("Batched packets require an owned full XModem1K CRC sender without extra headers.");
+			if (owned && (dataToSend == null || instant || _Variant != Variants.XModem1K))
+				throw new InvalidOperationException("Worker-owned sender requires a complete CRC XMODEM-1K buffer.");
+			bool failed = false;
+			if (owned) InProgress.Wait();
+			try
+			{
+				if (owned)
+				{
+					if (BatchSenderPackets)
+					{
+						PacketWriteTiming = new SenderTimingStatistics();
+						PacketAckWaitTiming = new SenderTimingStatistics();
+						EotWriteTiming = new SenderTimingStatistics();
+						EotAckWaitTiming = new SenderTimingStatistics();
+					}
+					InitializeOwnedSender();
+				}
             // Initialize control variables
             _TerminationReason = TerminationReasonEnum.TransferStillActiveNotTerminated;
             Aborted = false;
@@ -1414,12 +1610,34 @@ namespace BK7231Flasher
             Offset = offset;
             // Open port if it isn't open already
             if (Port.IsOpen == false)
-                Port.Open();
+			{
+				if (owned) throw new IOException("SV6x66 sender handle is closed; automatic reopen is forbidden.");
+				Port.Open();
+			}
 
+			if (!PreserveSenderInitiation)
+			{
             Port.DiscardInBuffer();
             Port.DiscardOutBuffer();
-            InProgress.Wait();
+			}
+			if (!owned) InProgress.Wait();
 
+			if (owned)
+			{
+				long generation = ownedSenderGeneration;
+				ReceiverStillAliveWatchdog = new Timer(state =>
+					RunOwnedSenderCallback(generation, () => ReceiverStillAliveWatchdogRoutine(state)),
+					null, SendInactivityTimeoutMillisec, SendInactivityTimeoutMillisec);
+				SenderPacketResponseWatchdog = new Timer(state =>
+					RunOwnedSenderCallback(generation, () => SenderPacketResponseWatchdogRoutine(state)),
+					null, SenderPacketRetryTimeoutMillisec, SenderPacketRetryTimeoutMillisec);
+				ownedSenderHandler = (sender, args) => RunOwnedSenderCallback(generation, () => ProcessReceivedData(sender));
+				Port.DataReceived += ownedSenderHandler;
+				if (PreserveSenderInitiation)
+					RunOwnedSenderCallback(generation, () => { if (Port.BytesToRead > 0) ProcessReceivedData(Port); });
+			}
+			else
+			{
             if (ReceiverStillAliveWatchdog == null)
                 ReceiverStillAliveWatchdog = new Timer(ReceiverStillAliveWatchdogRoutine, null, SendInactivityTimeoutMillisec, SendInactivityTimeoutMillisec);
             else
@@ -1432,17 +1650,19 @@ namespace BK7231Flasher
 
             // Attach event handler
             Port.DataReceived += new SerialDataReceivedEventHandler(Port_DataReceived);
+			}
 
             // Wait here for file initiation byte to be received from Receiver
             if(!instant) WaitForResponseFromReceiver.WaitOne();
             WaitForResponseFromReceiver.Reset();
+			if (owned) ThrowOwnedSenderCallbackFailure();
             if(_Variant == Variants.YModem && Aborted == false)
             {
                 TransmitYModemHeader(dataToSend == null ? 0 : dataToSend.Length);
             
                 if(TerminateSend)
                 {
-                    InProgress.Release();
+					if (!owned) InProgress.Release();
                     return 0;
                 }
             }
@@ -1452,14 +1672,31 @@ namespace BK7231Flasher
                 AddToOutboundPacket(dataToSend);
                 if(TerminateSend == false)
                     EndFile();
-                InProgress.Release();
+				if (owned) ThrowOwnedSenderCallbackFailure();
+				if (!owned) InProgress.Release();
                 return _TotalUserDataBytesSent;
             }
             else
             {
-                InProgress.Release();
+				if (!owned) InProgress.Release();
                 return 0;
             }
+			}
+			catch { failed = true; throw; }
+			finally
+			{
+				if (owned)
+				{
+					CompleteOwnedSender(() => {
+							if (ownedSenderHandler != null) Port.DataReceived -= ownedSenderHandler;
+							ownedSenderHandler = null;
+							AbortCore();
+							if (ownedSenderCancellation)
+								for (int index = 0; index < NumCancellationBytesToSend; index++)
+									Port.Write(new byte[] { CAN }, 0, 1);
+					}, failed);
+				}
+			}
         }
 
         private int _TotalUserDataBytesPacketized = 0;
@@ -1571,10 +1808,16 @@ namespace BK7231Flasher
                     {
                         // If packet successfully transmitted, keep a running tally of data bytes sent out.
                         // Only count actual user-provided data. Padding bytes are not counted.
+						if (PreserveSenderInitiation)
+							ReportAcknowledgedPacket(NumUserDataBytesAddedToCurrentPacket, dataToSend.Length);
+						else
+						{
                         _TotalUserDataBytesSent += NumUserDataBytesAddedToCurrentPacket;
-                        numUnpaddedDataBytesSentThisCall += NumUserDataBytesAddedToCurrentPacket;
+							numUnpaddedDataBytesSentThisCall += NumUserDataBytesAddedToCurrentPacket;
                         Offset += (uint)numBytesToAdd;
                         PacketSent?.Invoke(_TotalUserDataBytesSent, dataToSend.Length, _BlockNumToSend, Offset);
+						}
+						if (PreserveSenderInitiation) numUnpaddedDataBytesSentThisCall += NumUserDataBytesAddedToCurrentPacket;
                         // Reset control variables
                         NumUserDataBytesAddedToCurrentPacket = 0;
 
@@ -1595,6 +1838,20 @@ namespace BK7231Flasher
         }
 
         private bool PacketSuccessfullySent = false;
+		internal void AcceptSenderPacketAcknowledgement()
+		{
+			ResetSenderPacketResponseWatchdog();
+			_SenderConsecutiveRetryAttempts = 0;
+			PacketSuccessfullySent = true;
+			unchecked { _BlockNumToSend += 1; }
+			WaitForResponseFromReceiver.Set();
+		}
+		internal void ReportAcknowledgedPacket(int acknowledgedBytes, int totalLength)
+		{
+			_TotalUserDataBytesSent += acknowledgedBytes;
+			Offset += (uint)acknowledgedBytes;
+			PacketSent?.Invoke(_TotalUserDataBytesSent, totalLength, _BlockNumToSend, Offset);
+		}
 
         private int _SenderConsecutiveRetryAttempts = 0;
         public int SenderConsecutiveRetryAttempts
@@ -1631,6 +1888,30 @@ namespace BK7231Flasher
             PacketSuccessfullySent = false;
             while (PacketSuccessfullySent == false && _SenderConsecutiveRetryAttempts < MaxSenderRetries && TerminateSend == false)
             {
+				if (BatchSenderPackets)
+				{
+					if (_Variant != Variants.XModem1K || DataPacketToSend.Length != 1024 || checkValueBytes.Length != 2)
+						throw new InvalidOperationException("Batched sender requires an active owned 1024-byte CRC packet.");
+					byte[] packet = new byte[1029];
+					packet[0] = packetSizeHeader;
+					packet[1] = _BlockNumToSend;
+					packet[2] = (byte)(255 - _BlockNumToSend);
+					Buffer.BlockCopy(DataPacketToSend, 0, packet, 3, 1024);
+					Buffer.BlockCopy(checkValueBytes, 0, packet, 1027, 2);
+					WaitForResponseFromReceiver.Reset();
+					CurrentState = States.SenderPacketSent;
+					long writeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+					bool writeFailed = true;
+					try { Port.Write(packet, 0, packet.Length); writeFailed = false; }
+					finally { PacketWriteTiming.Record(writeStart, System.Diagnostics.Stopwatch.GetTimestamp(), writeFailed); }
+					long waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
+					bool waitFailed = true;
+					try { WaitForResponseFromReceiver.WaitOne(); waitFailed = !PacketSuccessfullySent; }
+					finally { PacketAckWaitTiming.Record(waitStart, System.Diagnostics.Stopwatch.GetTimestamp(), waitFailed); }
+					WaitForResponseFromReceiver.Reset();
+				}
+				else
+				{
                 // Send packet size header
                 Port.Write(new byte[] { packetSizeHeader }, 0, 1);
 
@@ -1654,6 +1935,7 @@ namespace BK7231Flasher
                 // Wait for ACK or NAK or CAN
                 WaitForResponseFromReceiver.WaitOne();
                 WaitForResponseFromReceiver.Reset();
+				}
 
                 // Once we've gotten a response, the only message expected from the Receiver at this point is a possible cancellation
                 CurrentState = States.SenderAlertForPossibleCancellation;
@@ -1726,13 +2008,29 @@ namespace BK7231Flasher
             CurrentState = States.SenderAwaitingEndOfFileConfirmation;
 
             int numEndOfFileBytesSent = 0;
-            while (EndOfFileAcknowledgementReceived == false && numEndOfFileBytesSent <= MaxSenderRetries)
+            while (EndOfFileAcknowledgementReceived == false && numEndOfFileBytesSent <= MaxSenderRetries
+				&& (!ownedSenderActive || !TerminateSend))
             {
                 WaitForResponseFromReceiver.Reset();
+				if (BatchSenderPackets)
+				{
+					long writeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+					bool writeFailed = true;
+					try { Port.Write(new byte[] { EndOfFileByteToSend }, 0, 1); writeFailed = false; }
+					finally { EotWriteTiming.Record(writeStart, System.Diagnostics.Stopwatch.GetTimestamp(), writeFailed); }
+					numEndOfFileBytesSent += 1;
+					long waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
+					bool waitFailed = true;
+					try { WaitForResponseFromReceiver.WaitOne(); waitFailed = !EndOfFileAcknowledgementReceived; }
+					finally { EotAckWaitTiming.Record(waitStart, System.Diagnostics.Stopwatch.GetTimestamp(), waitFailed); }
+				}
+				else
+				{
                 Port.Write(new byte[] { EndOfFileByteToSend }, 0, 1);
                 numEndOfFileBytesSent += 1;
                 if(DoNotWaitForEndOfFileAcknowledgement) break;
                 WaitForResponseFromReceiver.WaitOne();
+				}
             }
 
             if (EndOfFileAcknowledgementReceived == true)

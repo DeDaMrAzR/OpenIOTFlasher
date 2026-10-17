@@ -247,8 +247,7 @@
     <EmbeddedResource Include="Floaders\RTL8721DA_Stub.bin" />
     <EmbeddedResource Include="Floaders\RTL8720E_Stub.bin" />
     <EmbeddedResource Include="Floaders\RDA5981_Stub.bin" />
-	<EmbeddedResource Include="Floaders\SV6x66_Stub_stage1.bin" />
-	<EmbeddedResource Include="Floaders\SV6x66_Stub.bin" />
+	  <EmbeddedResource Include="Floaders\SV6x66_BankB_Carrier.bin" />
     <EmbeddedResource Include="Floaders\RTL8710B_Stub.bin" />
     <EmbeddedResource Include="Floaders\OPL1000A2_Stub.bin" />
     <EmbeddedResource Include="Floaders\OPL1000A2_Stub_stage1.bin" />

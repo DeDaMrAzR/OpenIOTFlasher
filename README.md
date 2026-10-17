@@ -1,8 +1,8 @@
-# OpenIOT flasher
+# OpenIOTFlasher
 
-OpenIOT flasher is a simple Windows application that allows you to back up and flash OpenBK/OpenBeken and related Open\* firmware projects to supported IoT chips without extensive programming knowledge. The tool originally focused on Beken BK7231T/BK7231N devices, but the current version supports a wider set of chip and platform modes.
+OpenIOTFlasher is a simple Windows application that allows you to back up and flash OpenBK/OpenBeken and related Open\* firmware projects to supported IoT chips without extensive programming knowledge. The tool originally focused on Beken BK7231T/BK7231N devices, but the current version supports a wider set of chip and platform modes.
 
-This project is maintained as the OpenIOT fork of the original [BK7231 GUI Flash Tool](https://github.com/openshwprojects/BK7231GUIFlashTool) and all credits belongs to the owner of that repo!!!
+This project is maintained as [OpenIOTFlasher](https://github.com/DeDaMrAzR/OpenIOTFlasher), a fork of the original [BK7231 GUI Flash Tool](https://github.com/openshwprojects/BK7231GUIFlashTool) and all credits belongs to the owner of that repo!!!
 
 Supported GUI-selectable chip/platform modes:
 - Beken UART:
@@ -32,7 +32,7 @@ Supported GUI-selectable chip/platform modes:
   - GD32VW553
 - Generic SPI CH341
 - iComm Semi:
-  - CKW04/SV6x66 (experimental read-only)
+  - SV6x66 (guarded backup and full-image restore for the tested 2 MiB profile)
 - Lightning Semi:
   - LN882H
   - LN8825
@@ -52,17 +52,9 @@ Supported GUI-selectable chip/platform modes:
   - XR809
   - XR872 (XF16)
 
+SV6x66 support is limited to the tested stock `FWSWES-SV04MATE-3.7.1` profile with JEDEC `C8 40 15` and 2 MiB flash. Backup stages the embedded loader by erasing and replacing inactive Bank B, so it is not a pristine pre-staging Bank-B backup. Guarded restore overwrites the complete flash from a matching 2 MiB image; support is not established for other SV6x66 device profiles.
+
 Furthermore, it can automatically create an original firmware backup before flashing, attempt Tuya GPIO/config extraction from backups, and read/write OBK configuration where the selected platform supports it.
-
-# CKW04/SV6x66 experimental read-only support
-
-OpenIOT flasher can create a staged full 2 MiB backup from the validated CKW04 hardware profile. This support is currently limited to stock `FWSWES-SV04MATE-3.7.1` with JEDEC `C8-40-15`; it must not be treated as generic support for other SV6x66 boards or flash layouts.
-
-The read is not passive. To gain flash access, the tool uses the stock OTA path to erase and replace inactive Bank B with the embedded loader before reading the complete flash. The resulting backup therefore does not preserve the previous Bank-B contents. Write, erase, configuration, firmware-download, and custom operations remain disabled for this platform.
-
-Select `CKW04/SV6x66`, click `Backup FW`, accept the Bank-B warning, and reset the target manually when prompted.
-
-See [platforms.md](platforms.md) for the complete capability matrix and limitations.
 
 Other built-in tools include:
 - Tuya config extraction from a binary dump
@@ -96,7 +88,7 @@ Once it's installed, you can compile this software by executing `msbuild` on the
 
 `mono BK7231Flasher/bin/debug/OpenIOT_flasher.exe`
 
-Alternatively, you can use a prebuilt OpenIOT flasher release.
+Alternatively, you can use a prebuilt OpenIOTFlasher release. The release executable is `OpenIOTFlasher.exe`, packaged in `OpenIOTFlasher-v<version>.zip`.
 
 # Brief usage instructions (BK72xx)
 

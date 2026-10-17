@@ -47,7 +47,6 @@ namespace BK7231Flasher
             this.chkIgnoreCRCErr = new System.Windows.Forms.CheckBox();
             this.chkUseCompression = new System.Windows.Forms.CheckBox();
             this.buttonDetect = new System.Windows.Forms.Button();
-            this.buttonVerify = new System.Windows.Forms.Button();
             this.buttonBlankCheck = new System.Windows.Forms.Button();
             this.buttonCustomOperation = new System.Windows.Forms.Button();
             this.checkBoxSkipKeyCheck = new System.Windows.Forms.CheckBox();
@@ -63,7 +62,6 @@ namespace BK7231Flasher
             this.buttonEraseAll = new System.Windows.Forms.Button();
             this.buttonClearOldFirmware = new System.Windows.Forms.Button();
             this.buttonOpenBackupsDir = new System.Windows.Forms.Button();
-            this.labelState = new System.Windows.Forms.Label();
             this.buttonWriteOnly = new System.Windows.Forms.Button();
             this.buttonClearLog = new System.Windows.Forms.Button();
             this.buttonStop = new System.Windows.Forms.Button();
@@ -76,6 +74,7 @@ namespace BK7231Flasher
             this.comboBoxBaudRate = new System.Windows.Forms.ComboBox();
             this.label5 = new System.Windows.Forms.Label();
             this.progressBar1 = new System.Windows.Forms.ProgressBar();
+            this.checkBoxVerifyBackupWrite = new System.Windows.Forms.CheckBox();
             this.tabPageReadRom = new System.Windows.Forms.TabPage();
             this.buttonReadRomClearLog = new System.Windows.Forms.Button();
             this.buttonReadRomOpenBackupsDir = new System.Windows.Forms.Button();
@@ -90,7 +89,6 @@ namespace BK7231Flasher
             this.radioButtonReadRomTargetEfuse = new System.Windows.Forms.RadioButton();
             this.radioButtonReadRomTargetOtp = new System.Windows.Forms.RadioButton();
             this.radioButtonReadRomTargetRom = new System.Windows.Forms.RadioButton();
-            this.labelReadRomState = new System.Windows.Forms.Label();
             this.labelReadRomBaud = new System.Windows.Forms.Label();
             this.comboBoxReadRomBaudRate = new System.Windows.Forms.ComboBox();
             this.labelReadRomPlatform = new System.Windows.Forms.Label();
@@ -99,6 +97,12 @@ namespace BK7231Flasher
             this.comboBoxReadRomUART = new System.Windows.Forms.ComboBox();
             this.progressBarReadRom = new System.Windows.Forms.ProgressBar();
             this.textBoxReadRomLog = new System.Windows.Forms.RichTextBox();
+            this.tabPageTerminal = new System.Windows.Forms.TabPage();
+            this.textBoxTerminalLog = new System.Windows.Forms.RichTextBox();
+            this.tableLayoutPanelTerminalSend = new System.Windows.Forms.TableLayoutPanel();
+            this.textBoxTerminalCommand = new System.Windows.Forms.TextBox();
+            this.comboBoxTerminalLineEnding = new System.Windows.Forms.ComboBox();
+            this.buttonTerminalSend = new System.Windows.Forms.Button();
             this.tabPagePageTool = new System.Windows.Forms.TabPage();
             this.textBox2 = new System.Windows.Forms.TextBox();
             this.button3 = new System.Windows.Forms.Button();
@@ -214,11 +218,22 @@ namespace BK7231Flasher
             this.buttonOTAFlash = new System.Windows.Forms.Button();
             this.textBoxOTATarget = new System.Windows.Forms.TextBox();
             this.timer100ms = new System.Windows.Forms.Timer(this.components);
+            this.checkBoxTerminalAutoScroll = new System.Windows.Forms.CheckBox();
+            this.buttonTerminalClear = new System.Windows.Forms.Button();
+            this.checkBoxTerminalAutoReconnect = new System.Windows.Forms.CheckBox();
+            this.buttonTerminalConnect = new System.Windows.Forms.Button();
+            this.comboBoxTerminalBaud = new System.Windows.Forms.ComboBox();
+            this.labelTerminalBaud = new System.Windows.Forms.Label();
+            this.labelTerminalStatus = new System.Windows.Forms.Label();
+            this.comboBoxTerminalPort = new System.Windows.Forms.ComboBox();
+            this.labelTerminalPort = new System.Windows.Forms.Label();
             this.tabControl1.SuspendLayout();
             this.tabPage1.SuspendLayout();
             this.tabPageReadRom.SuspendLayout();
             this.groupBoxReadRomRange.SuspendLayout();
             this.groupBoxReadRomTargets.SuspendLayout();
+            this.tabPageTerminal.SuspendLayout();
+            this.tableLayoutPanelTerminalSend.SuspendLayout();
             this.tabPagePageTool.SuspendLayout();
             this.tabPage2.SuspendLayout();
             this.tabPage5.SuspendLayout();
@@ -256,7 +271,7 @@ namespace BK7231Flasher
             this.comboBoxUART.FormattingEnabled = true;
             this.comboBoxUART.Location = new System.Drawing.Point(108, 6);
             this.comboBoxUART.Name = "comboBoxUART";
-            this.comboBoxUART.Size = new System.Drawing.Size(154, 21);
+            this.comboBoxUART.Size = new System.Drawing.Size(236, 21);
             this.comboBoxUART.TabIndex = 3;
             this.comboBoxUART.SelectedIndexChanged += new System.EventHandler(this.comboBoxUART_SelectedIndexChanged);
             // 
@@ -283,7 +298,7 @@ namespace BK7231Flasher
             this.comboBoxChipType.FormattingEnabled = true;
             this.comboBoxChipType.Location = new System.Drawing.Point(108, 33);
             this.comboBoxChipType.Name = "comboBoxChipType";
-            this.comboBoxChipType.Size = new System.Drawing.Size(154, 21);
+            this.comboBoxChipType.Size = new System.Drawing.Size(236, 21);
             this.comboBoxChipType.TabIndex = 6;
             this.comboBoxChipType.SelectedIndexChanged += new System.EventHandler(this.comboBoxChipType_SelectedIndexChanged);
             // 
@@ -301,14 +316,14 @@ namespace BK7231Flasher
             this.comboBoxFirmware.FormattingEnabled = true;
             this.comboBoxFirmware.Location = new System.Drawing.Point(108, 60);
             this.comboBoxFirmware.Name = "comboBoxFirmware";
-            this.comboBoxFirmware.Size = new System.Drawing.Size(261, 21);
+            this.comboBoxFirmware.Size = new System.Drawing.Size(375, 21);
             this.comboBoxFirmware.TabIndex = 8;
             this.comboBoxFirmware.SelectedIndexChanged += new System.EventHandler(this.comboBoxFirmware_SelectedIndexChanged);
             this.comboBoxFirmware.Click += new System.EventHandler(this.comboBoxFirmware_Click);
             // 
             // buttonBrowseFirmware
             // 
-            this.buttonBrowseFirmware.Location = new System.Drawing.Point(345, 59);
+            this.buttonBrowseFirmware.Location = new System.Drawing.Point(483, 59);
             this.buttonBrowseFirmware.Name = "buttonBrowseFirmware";
             this.buttonBrowseFirmware.Size = new System.Drawing.Size(24, 23);
             this.buttonBrowseFirmware.TabIndex = 9;
@@ -322,6 +337,7 @@ namespace BK7231Flasher
             // 
             this.tabControl1.Controls.Add(this.tabPage1);
             this.tabControl1.Controls.Add(this.tabPageReadRom);
+            this.tabControl1.Controls.Add(this.tabPageTerminal);
             this.tabControl1.Controls.Add(this.tabPagePageTool);
             this.tabControl1.Controls.Add(this.tabPage2);
             this.tabControl1.Controls.Add(this.tabPage5);
@@ -340,7 +356,6 @@ namespace BK7231Flasher
             this.tabPage1.Controls.Add(this.chkIgnoreCRCErr);
             this.tabPage1.Controls.Add(this.chkUseCompression);
             this.tabPage1.Controls.Add(this.buttonDetect);
-            this.tabPage1.Controls.Add(this.buttonVerify);
             this.tabPage1.Controls.Add(this.buttonBlankCheck);
             this.tabPage1.Controls.Add(this.buttonCustomOperation);
             this.tabPage1.Controls.Add(this.checkBoxSkipKeyCheck);
@@ -356,7 +371,6 @@ namespace BK7231Flasher
             this.tabPage1.Controls.Add(this.buttonEraseAll);
             this.tabPage1.Controls.Add(this.buttonClearOldFirmware);
             this.tabPage1.Controls.Add(this.buttonOpenBackupsDir);
-            this.tabPage1.Controls.Add(this.labelState);
             this.tabPage1.Controls.Add(this.buttonWriteOnly);
             this.tabPage1.Controls.Add(this.buttonClearLog);
             this.tabPage1.Controls.Add(this.buttonStop);
@@ -378,6 +392,7 @@ namespace BK7231Flasher
             this.tabPage1.Controls.Add(this.comboBoxChipType);
             this.tabPage1.Controls.Add(this.label1);
             this.tabPage1.Controls.Add(this.label2);
+            this.tabPage1.Controls.Add(this.checkBoxVerifyBackupWrite);
             this.tabPage1.Location = new System.Drawing.Point(4, 22);
             this.tabPage1.Name = "tabPage1";
             this.tabPage1.Padding = new System.Windows.Forms.Padding(3);
@@ -389,7 +404,7 @@ namespace BK7231Flasher
             // chkIgnoreCRCErr
             // 
             this.chkIgnoreCRCErr.AutoSize = true;
-            this.chkIgnoreCRCErr.Location = new System.Drawing.Point(117, 405);
+            this.chkIgnoreCRCErr.Location = new System.Drawing.Point(117, 411);
             this.chkIgnoreCRCErr.Name = "chkIgnoreCRCErr";
             this.chkIgnoreCRCErr.Size = new System.Drawing.Size(106, 17);
             this.chkIgnoreCRCErr.TabIndex = 37;
@@ -400,7 +415,7 @@ namespace BK7231Flasher
             // chkUseCompression
             // 
             this.chkUseCompression.AutoSize = true;
-            this.chkUseCompression.Location = new System.Drawing.Point(117, 362);
+            this.chkUseCompression.Location = new System.Drawing.Point(117, 368);
             this.chkUseCompression.Name = "chkUseCompression";
             this.chkUseCompression.Size = new System.Drawing.Size(121, 17);
             this.chkUseCompression.TabIndex = 41;
@@ -410,7 +425,7 @@ namespace BK7231Flasher
             // 
             // buttonDetect
             // 
-            this.buttonDetect.Location = new System.Drawing.Point(11, 399);
+            this.buttonDetect.Location = new System.Drawing.Point(11, 405);
             this.buttonDetect.Name = "buttonDetect";
             this.buttonDetect.Size = new System.Drawing.Size(97, 23);
             this.buttonDetect.TabIndex = 40;
@@ -418,19 +433,9 @@ namespace BK7231Flasher
             this.buttonDetect.UseVisualStyleBackColor = true;
             this.buttonDetect.Click += new System.EventHandler(this.buttonDetect_Click);
             // 
-            // buttonVerify
-            // 
-            this.buttonVerify.Location = new System.Drawing.Point(404, 126);
-            this.buttonVerify.Name = "buttonVerify";
-            this.buttonVerify.Size = new System.Drawing.Size(125, 40);
-            this.buttonVerify.TabIndex = 39;
-            this.buttonVerify.Text = "Verify FW";
-            this.buttonVerify.UseVisualStyleBackColor = true;
-            this.buttonVerify.Click += new System.EventHandler(this.buttonVerify_Click);
-            // 
             // buttonBlankCheck
             // 
-            this.buttonBlankCheck.Location = new System.Drawing.Point(11, 370);
+            this.buttonBlankCheck.Location = new System.Drawing.Point(11, 376);
             this.buttonBlankCheck.Name = "buttonBlankCheck";
             this.buttonBlankCheck.Size = new System.Drawing.Size(97, 23);
             this.buttonBlankCheck.TabIndex = 38;
@@ -440,7 +445,7 @@ namespace BK7231Flasher
             // 
             // buttonCustomOperation
             // 
-            this.buttonCustomOperation.Location = new System.Drawing.Point(11, 312);
+            this.buttonCustomOperation.Location = new System.Drawing.Point(11, 318);
             this.buttonCustomOperation.Name = "buttonCustomOperation";
             this.buttonCustomOperation.Size = new System.Drawing.Size(100, 23);
             this.buttonCustomOperation.TabIndex = 36;
@@ -451,7 +456,7 @@ namespace BK7231Flasher
             // checkBoxSkipKeyCheck
             // 
             this.checkBoxSkipKeyCheck.AutoSize = true;
-            this.checkBoxSkipKeyCheck.Location = new System.Drawing.Point(117, 385);
+            this.checkBoxSkipKeyCheck.Location = new System.Drawing.Point(117, 391);
             this.checkBoxSkipKeyCheck.Name = "checkBoxSkipKeyCheck";
             this.checkBoxSkipKeyCheck.Size = new System.Drawing.Size(125, 17);
             this.checkBoxSkipKeyCheck.TabIndex = 35;
@@ -462,7 +467,7 @@ namespace BK7231Flasher
             // checkBoxOverwriteBootloader
             // 
             this.checkBoxOverwriteBootloader.AutoSize = true;
-            this.checkBoxOverwriteBootloader.Location = new System.Drawing.Point(117, 339);
+            this.checkBoxOverwriteBootloader.Location = new System.Drawing.Point(117, 345);
             this.checkBoxOverwriteBootloader.Name = "checkBoxOverwriteBootloader";
             this.checkBoxOverwriteBootloader.Size = new System.Drawing.Size(227, 17);
             this.checkBoxOverwriteBootloader.TabIndex = 34;
@@ -472,7 +477,7 @@ namespace BK7231Flasher
             // 
             // buttonReadOBKConfig
             // 
-            this.buttonReadOBKConfig.Location = new System.Drawing.Point(173, 195);
+            this.buttonReadOBKConfig.Location = new System.Drawing.Point(176, 195);
             this.buttonReadOBKConfig.Name = "buttonReadOBKConfig";
             this.buttonReadOBKConfig.Size = new System.Drawing.Size(150, 23);
             this.buttonReadOBKConfig.TabIndex = 33;
@@ -482,7 +487,7 @@ namespace BK7231Flasher
             // 
             // buttonWriteOBKConfig
             // 
-            this.buttonWriteOBKConfig.Location = new System.Drawing.Point(342, 195);
+            this.buttonWriteOBKConfig.Location = new System.Drawing.Point(176, 224);
             this.buttonWriteOBKConfig.Name = "buttonWriteOBKConfig";
             this.buttonWriteOBKConfig.Size = new System.Drawing.Size(150, 23);
             this.buttonWriteOBKConfig.TabIndex = 32;
@@ -495,7 +500,7 @@ namespace BK7231Flasher
             this.checkBoxReadOBKConfig.AutoSize = true;
             this.checkBoxReadOBKConfig.Checked = true;
             this.checkBoxReadOBKConfig.CheckState = System.Windows.Forms.CheckState.Checked;
-            this.checkBoxReadOBKConfig.Location = new System.Drawing.Point(239, 172);
+            this.checkBoxReadOBKConfig.Location = new System.Drawing.Point(345, 199);
             this.checkBoxReadOBKConfig.Name = "checkBoxReadOBKConfig";
             this.checkBoxReadOBKConfig.Size = new System.Drawing.Size(159, 17);
             this.checkBoxReadOBKConfig.TabIndex = 31;
@@ -507,7 +512,7 @@ namespace BK7231Flasher
             this.checkBoxAutoReadTuya.AutoSize = true;
             this.checkBoxAutoReadTuya.Checked = true;
             this.checkBoxAutoReadTuya.CheckState = System.Windows.Forms.CheckState.Checked;
-            this.checkBoxAutoReadTuya.Location = new System.Drawing.Point(11, 172);
+            this.checkBoxAutoReadTuya.Location = new System.Drawing.Point(345, 257);
             this.checkBoxAutoReadTuya.Name = "checkBoxAutoReadTuya";
             this.checkBoxAutoReadTuya.Size = new System.Drawing.Size(222, 17);
             this.checkBoxAutoReadTuya.TabIndex = 30;
@@ -516,7 +521,7 @@ namespace BK7231Flasher
             // 
             // buttonChangeOBKSettings
             // 
-            this.buttonChangeOBKSettings.Location = new System.Drawing.Point(11, 195);
+            this.buttonChangeOBKSettings.Location = new System.Drawing.Point(176, 253);
             this.buttonChangeOBKSettings.Name = "buttonChangeOBKSettings";
             this.buttonChangeOBKSettings.Size = new System.Drawing.Size(150, 23);
             this.buttonChangeOBKSettings.TabIndex = 29;
@@ -527,7 +532,7 @@ namespace BK7231Flasher
             // checkBoxAutoOBKConfig
             // 
             this.checkBoxAutoOBKConfig.AutoSize = true;
-            this.checkBoxAutoOBKConfig.Location = new System.Drawing.Point(404, 172);
+            this.checkBoxAutoOBKConfig.Location = new System.Drawing.Point(345, 228);
             this.checkBoxAutoOBKConfig.Name = "checkBoxAutoOBKConfig";
             this.checkBoxAutoOBKConfig.Size = new System.Drawing.Size(225, 17);
             this.checkBoxAutoOBKConfig.TabIndex = 28;
@@ -537,7 +542,7 @@ namespace BK7231Flasher
             // checkBoxAllowBackup
             // 
             this.checkBoxAllowBackup.AutoSize = true;
-            this.checkBoxAllowBackup.Location = new System.Drawing.Point(117, 316);
+            this.checkBoxAllowBackup.Location = new System.Drawing.Point(117, 322);
             this.checkBoxAllowBackup.Name = "checkBoxAllowBackup";
             this.checkBoxAllowBackup.Size = new System.Drawing.Size(125, 17);
             this.checkBoxAllowBackup.TabIndex = 27;
@@ -547,7 +552,7 @@ namespace BK7231Flasher
             // 
             // buttonRestoreRF
             // 
-            this.buttonRestoreRF.Location = new System.Drawing.Point(11, 428);
+            this.buttonRestoreRF.Location = new System.Drawing.Point(11, 434);
             this.buttonRestoreRF.Name = "buttonRestoreRF";
             this.buttonRestoreRF.Size = new System.Drawing.Size(100, 23);
             this.buttonRestoreRF.TabIndex = 26;
@@ -557,7 +562,7 @@ namespace BK7231Flasher
             // 
             // buttonEraseAll
             // 
-            this.buttonEraseAll.Location = new System.Drawing.Point(11, 341);
+            this.buttonEraseAll.Location = new System.Drawing.Point(11, 347);
             this.buttonEraseAll.Name = "buttonEraseAll";
             this.buttonEraseAll.Size = new System.Drawing.Size(97, 23);
             this.buttonEraseAll.TabIndex = 25;
@@ -567,7 +572,7 @@ namespace BK7231Flasher
             // 
             // buttonClearOldFirmware
             // 
-            this.buttonClearOldFirmware.Location = new System.Drawing.Point(342, 240);
+            this.buttonClearOldFirmware.Location = new System.Drawing.Point(11, 224);
             this.buttonClearOldFirmware.Name = "buttonClearOldFirmware";
             this.buttonClearOldFirmware.Size = new System.Drawing.Size(150, 23);
             this.buttonClearOldFirmware.TabIndex = 24;
@@ -577,22 +582,13 @@ namespace BK7231Flasher
             // 
             // buttonOpenBackupsDir
             // 
-            this.buttonOpenBackupsDir.Location = new System.Drawing.Point(173, 240);
+            this.buttonOpenBackupsDir.Location = new System.Drawing.Point(11, 253);
             this.buttonOpenBackupsDir.Name = "buttonOpenBackupsDir";
             this.buttonOpenBackupsDir.Size = new System.Drawing.Size(150, 23);
             this.buttonOpenBackupsDir.TabIndex = 23;
             this.buttonOpenBackupsDir.Text = "Open backups directory";
             this.buttonOpenBackupsDir.UseVisualStyleBackColor = true;
             this.buttonOpenBackupsDir.Click += new System.EventHandler(this.buttonOpenBackupsDir_Click);
-            // 
-            // labelState
-            // 
-            this.labelState.Font = new System.Drawing.Font("Microsoft Sans Serif", 17F);
-            this.labelState.Location = new System.Drawing.Point(268, 84);
-            this.labelState.Name = "labelState";
-            this.labelState.Size = new System.Drawing.Size(333, 38);
-            this.labelState.TabIndex = 22;
-            this.labelState.Text = "Doing nothing...";
             // 
             // buttonWriteOnly
             // 
@@ -628,7 +624,7 @@ namespace BK7231Flasher
             // checkBoxShowAdvanced
             // 
             this.checkBoxShowAdvanced.AutoSize = true;
-            this.checkBoxShowAdvanced.Location = new System.Drawing.Point(11, 289);
+            this.checkBoxShowAdvanced.Location = new System.Drawing.Point(11, 295);
             this.checkBoxShowAdvanced.Name = "checkBoxShowAdvanced";
             this.checkBoxShowAdvanced.Size = new System.Drawing.Size(141, 17);
             this.checkBoxShowAdvanced.TabIndex = 17;
@@ -648,7 +644,7 @@ namespace BK7231Flasher
             // 
             // buttonTestWrite
             // 
-            this.buttonTestWrite.Location = new System.Drawing.Point(11, 457);
+            this.buttonTestWrite.Location = new System.Drawing.Point(11, 463);
             this.buttonTestWrite.Name = "buttonTestWrite";
             this.buttonTestWrite.Size = new System.Drawing.Size(100, 23);
             this.buttonTestWrite.TabIndex = 15;
@@ -658,7 +654,7 @@ namespace BK7231Flasher
             // 
             // buttonTestReadWrite
             // 
-            this.buttonTestReadWrite.Location = new System.Drawing.Point(11, 486);
+            this.buttonTestReadWrite.Location = new System.Drawing.Point(11, 492);
             this.buttonTestReadWrite.Name = "buttonTestReadWrite";
             this.buttonTestReadWrite.Size = new System.Drawing.Size(100, 23);
             this.buttonTestReadWrite.TabIndex = 14;
@@ -668,7 +664,7 @@ namespace BK7231Flasher
             // 
             // buttonDownloadLatest
             // 
-            this.buttonDownloadLatest.Location = new System.Drawing.Point(11, 240);
+            this.buttonDownloadLatest.Location = new System.Drawing.Point(11, 195);
             this.buttonDownloadLatest.Name = "buttonDownloadLatest";
             this.buttonDownloadLatest.Size = new System.Drawing.Size(150, 23);
             this.buttonDownloadLatest.TabIndex = 13;
@@ -679,7 +675,7 @@ namespace BK7231Flasher
             // labelMatchingFirmwares
             // 
             this.labelMatchingFirmwares.AutoSize = true;
-            this.labelMatchingFirmwares.Location = new System.Drawing.Point(375, 63);
+            this.labelMatchingFirmwares.Location = new System.Drawing.Point(513, 64);
             this.labelMatchingFirmwares.Name = "labelMatchingFirmwares";
             this.labelMatchingFirmwares.Size = new System.Drawing.Size(121, 13);
             this.labelMatchingFirmwares.TabIndex = 12;
@@ -690,7 +686,7 @@ namespace BK7231Flasher
             this.comboBoxBaudRate.FormattingEnabled = true;
             this.comboBoxBaudRate.Location = new System.Drawing.Point(108, 88);
             this.comboBoxBaudRate.Name = "comboBoxBaudRate";
-            this.comboBoxBaudRate.Size = new System.Drawing.Size(154, 21);
+            this.comboBoxBaudRate.Size = new System.Drawing.Size(236, 21);
             this.comboBoxBaudRate.TabIndex = 11;
             this.comboBoxBaudRate.SelectedIndexChanged += new System.EventHandler(this.comboBoxBaudRate_SelectedIndexChanged);
             // 
@@ -712,6 +708,15 @@ namespace BK7231Flasher
             this.progressBar1.Size = new System.Drawing.Size(576, 23);
             this.progressBar1.TabIndex = 9;
             // 
+            // checkBoxVerifyBackupWrite
+            // 
+            this.checkBoxVerifyBackupWrite.Location = new System.Drawing.Point(117, 422);
+            this.checkBoxVerifyBackupWrite.Name = "checkBoxVerifyBackupWrite";
+            this.checkBoxVerifyBackupWrite.Size = new System.Drawing.Size(125, 40);
+            this.checkBoxVerifyBackupWrite.TabIndex = 39;
+            this.checkBoxVerifyBackupWrite.Text = "Verify Backup/Write";
+            this.checkBoxVerifyBackupWrite.UseVisualStyleBackColor = true;
+            // 
             // tabPageReadRom
             // 
             this.tabPageReadRom.Controls.Add(this.buttonReadRomClearLog);
@@ -720,7 +725,6 @@ namespace BK7231Flasher
             this.tabPageReadRom.Controls.Add(this.buttonReadRomRead);
             this.tabPageReadRom.Controls.Add(this.groupBoxReadRomRange);
             this.tabPageReadRom.Controls.Add(this.groupBoxReadRomTargets);
-            this.tabPageReadRom.Controls.Add(this.labelReadRomState);
             this.tabPageReadRom.Controls.Add(this.labelReadRomBaud);
             this.tabPageReadRom.Controls.Add(this.comboBoxReadRomBaudRate);
             this.tabPageReadRom.Controls.Add(this.labelReadRomPlatform);
@@ -875,15 +879,6 @@ namespace BK7231Flasher
             this.radioButtonReadRomTargetRom.UseVisualStyleBackColor = true;
             this.radioButtonReadRomTargetRom.CheckedChanged += new System.EventHandler(this.radioButtonReadRomTarget_CheckedChanged);
             // 
-            // labelReadRomState
-            // 
-            this.labelReadRomState.Font = new System.Drawing.Font("Microsoft Sans Serif", 17F);
-            this.labelReadRomState.Location = new System.Drawing.Point(268, 84);
-            this.labelReadRomState.Name = "labelReadRomState";
-            this.labelReadRomState.Size = new System.Drawing.Size(389, 38);
-            this.labelReadRomState.TabIndex = 8;
-            this.labelReadRomState.Text = "Doing nothing...";
-            // 
             // labelReadRomBaud
             // 
             this.labelReadRomBaud.AutoSize = true;
@@ -957,6 +952,95 @@ namespace BK7231Flasher
             this.textBoxReadRomLog.Size = new System.Drawing.Size(683, 601);
             this.textBoxReadRomLog.TabIndex = 0;
             this.textBoxReadRomLog.Text = "";
+            // 
+            // tabPageTerminal
+            // 
+            this.tabPageTerminal.Controls.Add(this.labelTerminalPort);
+            this.tabPageTerminal.Controls.Add(this.textBoxTerminalLog);
+            this.tabPageTerminal.Controls.Add(this.comboBoxTerminalPort);
+            this.tabPageTerminal.Controls.Add(this.tableLayoutPanelTerminalSend);
+            this.tabPageTerminal.Controls.Add(this.labelTerminalStatus);
+            this.tabPageTerminal.Controls.Add(this.labelTerminalBaud);
+            this.tabPageTerminal.Controls.Add(this.checkBoxTerminalAutoScroll);
+            this.tabPageTerminal.Controls.Add(this.comboBoxTerminalBaud);
+            this.tabPageTerminal.Controls.Add(this.buttonTerminalClear);
+            this.tabPageTerminal.Controls.Add(this.buttonTerminalConnect);
+            this.tabPageTerminal.Controls.Add(this.checkBoxTerminalAutoReconnect);
+            this.tabPageTerminal.Location = new System.Drawing.Point(4, 22);
+            this.tabPageTerminal.Name = "tabPageTerminal";
+            this.tabPageTerminal.Padding = new System.Windows.Forms.Padding(8);
+            this.tabPageTerminal.Size = new System.Drawing.Size(1355, 647);
+            this.tabPageTerminal.TabIndex = 2;
+            this.tabPageTerminal.Text = "Terminal";
+            this.tabPageTerminal.UseVisualStyleBackColor = true;
+            // 
+            // textBoxTerminalLog
+            // 
+            this.textBoxTerminalLog.Anchor = System.Windows.Forms.AnchorStyles.None;
+            this.textBoxTerminalLog.BackColor = System.Drawing.SystemColors.Window;
+            this.textBoxTerminalLog.DetectUrls = false;
+            this.textBoxTerminalLog.Font = new System.Drawing.Font("Courier New", 9F);
+            this.textBoxTerminalLog.Location = new System.Drawing.Point(8, 43);
+            this.textBoxTerminalLog.Name = "textBoxTerminalLog";
+            this.textBoxTerminalLog.ReadOnly = true;
+            this.textBoxTerminalLog.Size = new System.Drawing.Size(1339, 562);
+            this.textBoxTerminalLog.TabIndex = 1;
+            this.textBoxTerminalLog.Text = "";
+            this.textBoxTerminalLog.WordWrap = false;
+            // 
+            // tableLayoutPanelTerminalSend
+            // 
+            this.tableLayoutPanelTerminalSend.ColumnCount = 3;
+            this.tableLayoutPanelTerminalSend.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.tableLayoutPanelTerminalSend.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 80F));
+            this.tableLayoutPanelTerminalSend.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 80F));
+            this.tableLayoutPanelTerminalSend.Controls.Add(this.textBoxTerminalCommand, 0, 0);
+            this.tableLayoutPanelTerminalSend.Controls.Add(this.comboBoxTerminalLineEnding, 1, 0);
+            this.tableLayoutPanelTerminalSend.Controls.Add(this.buttonTerminalSend, 2, 0);
+            this.tableLayoutPanelTerminalSend.Dock = System.Windows.Forms.DockStyle.Bottom;
+            this.tableLayoutPanelTerminalSend.Location = new System.Drawing.Point(8, 605);
+            this.tableLayoutPanelTerminalSend.Name = "tableLayoutPanelTerminalSend";
+            this.tableLayoutPanelTerminalSend.Padding = new System.Windows.Forms.Padding(0, 4, 0, 0);
+            this.tableLayoutPanelTerminalSend.RowCount = 1;
+            this.tableLayoutPanelTerminalSend.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 30F));
+            this.tableLayoutPanelTerminalSend.Size = new System.Drawing.Size(1339, 34);
+            this.tableLayoutPanelTerminalSend.TabIndex = 2;
+            // 
+            // textBoxTerminalCommand
+            // 
+            this.textBoxTerminalCommand.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.textBoxTerminalCommand.Location = new System.Drawing.Point(3, 7);
+            this.textBoxTerminalCommand.Name = "textBoxTerminalCommand";
+            this.textBoxTerminalCommand.Size = new System.Drawing.Size(1173, 20);
+            this.textBoxTerminalCommand.TabIndex = 0;
+            this.textBoxTerminalCommand.KeyDown += new System.Windows.Forms.KeyEventHandler(this.TextBoxTerminalCommand_KeyDown);
+            // 
+            // comboBoxTerminalLineEnding
+            // 
+            this.comboBoxTerminalLineEnding.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.comboBoxTerminalLineEnding.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.comboBoxTerminalLineEnding.FormattingEnabled = true;
+            this.comboBoxTerminalLineEnding.Items.AddRange(new object[] {
+            "CRLF",
+            "LF",
+            "CR",
+            "None"});
+            this.comboBoxTerminalLineEnding.Location = new System.Drawing.Point(1182, 7);
+            this.comboBoxTerminalLineEnding.Name = "comboBoxTerminalLineEnding";
+            this.comboBoxTerminalLineEnding.Size = new System.Drawing.Size(74, 21);
+            this.comboBoxTerminalLineEnding.TabIndex = 1;
+            // 
+            // buttonTerminalSend
+            // 
+            this.buttonTerminalSend.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.buttonTerminalSend.Enabled = false;
+            this.buttonTerminalSend.Location = new System.Drawing.Point(1262, 7);
+            this.buttonTerminalSend.Name = "buttonTerminalSend";
+            this.buttonTerminalSend.Size = new System.Drawing.Size(74, 24);
+            this.buttonTerminalSend.TabIndex = 2;
+            this.buttonTerminalSend.Text = "Send";
+            this.buttonTerminalSend.UseVisualStyleBackColor = true;
+            this.buttonTerminalSend.Click += new System.EventHandler(this.ButtonTerminalSend_Click);
             // 
             // tabPagePageTool
             // 
@@ -1078,9 +1162,9 @@ namespace BK7231Flasher
             this.label32.TabIndex = 13;
             this.label32.Text = "You can also get binary from OBK device, only Tuya-config section, 72KB, see tuto" +
     "rial:";
-            //
+            // 
             // buttonTuyaConfig_CopyTextToClipBoard
-            //
+            // 
             this.buttonTuyaConfig_CopyTextToClipBoard.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
             this.buttonTuyaConfig_CopyTextToClipBoard.Location = new System.Drawing.Point(1230, 92);
             this.buttonTuyaConfig_CopyTextToClipBoard.Name = "buttonTuyaConfig_CopyTextToClipBoard";
@@ -1089,9 +1173,9 @@ namespace BK7231Flasher
             this.buttonTuyaConfig_CopyTextToClipBoard.Text = "Copy to Clipboard";
             this.buttonTuyaConfig_CopyTextToClipBoard.UseVisualStyleBackColor = true;
             this.buttonTuyaConfig_CopyTextToClipBoard.Click += new System.EventHandler(this.buttonTuyaConfig_CopyTextToClipBoard_Click);
-            //
+            // 
             // buttonTuyaConfig_CopyJSONToClipBoard
-            //
+            // 
             this.buttonTuyaConfig_CopyJSONToClipBoard.Location = new System.Drawing.Point(558, 92);
             this.buttonTuyaConfig_CopyJSONToClipBoard.Name = "buttonTuyaConfig_CopyJSONToClipBoard";
             this.buttonTuyaConfig_CopyJSONToClipBoard.Size = new System.Drawing.Size(114, 21);
@@ -1111,8 +1195,8 @@ namespace BK7231Flasher
             // 
             // textBoxTuyaCFGText
             // 
-            this.textBoxTuyaCFGText.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
-            | System.Windows.Forms.AnchorStyles.Left)
+            this.textBoxTuyaCFGText.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
             this.textBoxTuyaCFGText.Location = new System.Drawing.Point(679, 116);
             this.textBoxTuyaCFGText.Multiline = true;
@@ -1143,7 +1227,7 @@ namespace BK7231Flasher
             // 
             // textBoxTuyaCFGJSON
             // 
-            this.textBoxTuyaCFGJSON.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+            this.textBoxTuyaCFGJSON.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
             | System.Windows.Forms.AnchorStyles.Left)));
             this.textBoxTuyaCFGJSON.Location = new System.Drawing.Point(18, 116);
             this.textBoxTuyaCFGJSON.Multiline = true;
@@ -2149,6 +2233,116 @@ namespace BK7231Flasher
             this.timer100ms.Enabled = true;
             this.timer100ms.Tick += new System.EventHandler(this.timer100ms_Tick);
             // 
+            // checkBoxTerminalAutoScroll
+            // 
+            this.checkBoxTerminalAutoScroll.Checked = true;
+            this.checkBoxTerminalAutoScroll.CheckState = System.Windows.Forms.CheckState.Checked;
+            this.checkBoxTerminalAutoScroll.Location = new System.Drawing.Point(814, 10);
+            this.checkBoxTerminalAutoScroll.Name = "checkBoxTerminalAutoScroll";
+            this.checkBoxTerminalAutoScroll.Padding = new System.Windows.Forms.Padding(8, 5, 0, 0);
+            this.checkBoxTerminalAutoScroll.Size = new System.Drawing.Size(83, 22);
+            this.checkBoxTerminalAutoScroll.TabIndex = 7;
+            this.checkBoxTerminalAutoScroll.Text = "Auto-scroll";
+            this.checkBoxTerminalAutoScroll.UseVisualStyleBackColor = true;
+            // 
+            // buttonTerminalClear
+            // 
+            this.buttonTerminalClear.AutoSize = true;
+            this.buttonTerminalClear.Location = new System.Drawing.Point(732, 11);
+            this.buttonTerminalClear.Name = "buttonTerminalClear";
+            this.buttonTerminalClear.Size = new System.Drawing.Size(75, 23);
+            this.buttonTerminalClear.TabIndex = 6;
+            this.buttonTerminalClear.Text = "Clear";
+            this.buttonTerminalClear.UseVisualStyleBackColor = true;
+            this.buttonTerminalClear.Click += new System.EventHandler(this.ButtonTerminalClear_Click);
+            // 
+            // checkBoxTerminalAutoReconnect
+            // 
+            this.checkBoxTerminalAutoReconnect.Location = new System.Drawing.Point(619, 10);
+            this.checkBoxTerminalAutoReconnect.Name = "checkBoxTerminalAutoReconnect";
+            this.checkBoxTerminalAutoReconnect.Padding = new System.Windows.Forms.Padding(8, 5, 0, 0);
+            this.checkBoxTerminalAutoReconnect.Size = new System.Drawing.Size(107, 22);
+            this.checkBoxTerminalAutoReconnect.TabIndex = 5;
+            this.checkBoxTerminalAutoReconnect.Text = "Auto-reconnect";
+            this.checkBoxTerminalAutoReconnect.UseVisualStyleBackColor = true;
+            this.checkBoxTerminalAutoReconnect.CheckedChanged += new System.EventHandler(this.CheckBoxTerminalAutoReconnect_CheckedChanged);
+            // 
+            // buttonTerminalConnect
+            // 
+            this.buttonTerminalConnect.AutoSize = true;
+            this.buttonTerminalConnect.Location = new System.Drawing.Point(538, 11);
+            this.buttonTerminalConnect.Name = "buttonTerminalConnect";
+            this.buttonTerminalConnect.Size = new System.Drawing.Size(75, 23);
+            this.buttonTerminalConnect.TabIndex = 4;
+            this.buttonTerminalConnect.Text = "Connect";
+            this.buttonTerminalConnect.UseVisualStyleBackColor = true;
+            this.buttonTerminalConnect.Click += new System.EventHandler(this.ButtonTerminalConnect_Click);
+            // 
+            // comboBoxTerminalBaud
+            // 
+            this.comboBoxTerminalBaud.FormattingEnabled = true;
+            this.comboBoxTerminalBaud.Items.AddRange(new object[] {
+            9600,
+            19200,
+            38400,
+            57600,
+            115200,
+            230400,
+            460800,
+            921600,
+            1500000,
+            2000000,
+            3000000});
+            this.comboBoxTerminalBaud.Location = new System.Drawing.Point(432, 11);
+            this.comboBoxTerminalBaud.Name = "comboBoxTerminalBaud";
+            this.comboBoxTerminalBaud.Size = new System.Drawing.Size(100, 21);
+            this.comboBoxTerminalBaud.TabIndex = 3;
+            this.comboBoxTerminalBaud.Text = "115200";
+            this.comboBoxTerminalBaud.SelectionChangeCommitted += new System.EventHandler(this.ComboBoxTerminalBaud_SelectionChangeCommitted);
+            // 
+            // labelTerminalBaud
+            // 
+            this.labelTerminalBaud.Anchor = System.Windows.Forms.AnchorStyles.None;
+            this.labelTerminalBaud.Location = new System.Drawing.Point(385, 9);
+            this.labelTerminalBaud.Name = "labelTerminalBaud";
+            this.labelTerminalBaud.Padding = new System.Windows.Forms.Padding(8, 6, 0, 0);
+            this.labelTerminalBaud.RightToLeft = System.Windows.Forms.RightToLeft.No;
+            this.labelTerminalBaud.Size = new System.Drawing.Size(43, 21);
+            this.labelTerminalBaud.TabIndex = 2;
+            this.labelTerminalBaud.Text = "Baud:";
+            this.labelTerminalBaud.TextAlign = System.Drawing.ContentAlignment.TopCenter;
+            // 
+            // labelTerminalStatus
+            // 
+            this.labelTerminalStatus.Anchor = System.Windows.Forms.AnchorStyles.None;
+            this.labelTerminalStatus.AutoEllipsis = true;
+            this.labelTerminalStatus.Location = new System.Drawing.Point(300, 9);
+            this.labelTerminalStatus.Name = "labelTerminalStatus";
+            this.labelTerminalStatus.Padding = new System.Windows.Forms.Padding(8, 6, 0, 0);
+            this.labelTerminalStatus.Size = new System.Drawing.Size(93, 21);
+            this.labelTerminalStatus.TabIndex = 8;
+            this.labelTerminalStatus.Text = "Disconnected";
+            // 
+            // comboBoxTerminalPort
+            // 
+            this.comboBoxTerminalPort.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.comboBoxTerminalPort.FormattingEnabled = true;
+            this.comboBoxTerminalPort.Location = new System.Drawing.Point(69, 11);
+            this.comboBoxTerminalPort.Name = "comboBoxTerminalPort";
+            this.comboBoxTerminalPort.Size = new System.Drawing.Size(226, 21);
+            this.comboBoxTerminalPort.TabIndex = 1;
+            this.comboBoxTerminalPort.SelectionChangeCommitted += new System.EventHandler(this.ComboBoxTerminalPort_SelectionChangeCommitted);
+            // 
+            // labelTerminalPort
+            // 
+            this.labelTerminalPort.AutoSize = true;
+            this.labelTerminalPort.Location = new System.Drawing.Point(8, 8);
+            this.labelTerminalPort.Name = "labelTerminalPort";
+            this.labelTerminalPort.Padding = new System.Windows.Forms.Padding(0, 6, 0, 0);
+            this.labelTerminalPort.Size = new System.Drawing.Size(55, 19);
+            this.labelTerminalPort.TabIndex = 0;
+            this.labelTerminalPort.Text = "COM port:";
+            // 
             // FormMain
             // 
             this.AllowDrop = true;
@@ -2169,6 +2363,10 @@ namespace BK7231Flasher
             this.groupBoxReadRomRange.PerformLayout();
             this.groupBoxReadRomTargets.ResumeLayout(false);
             this.groupBoxReadRomTargets.PerformLayout();
+            this.tabPageTerminal.ResumeLayout(false);
+            this.tabPageTerminal.PerformLayout();
+            this.tableLayoutPanelTerminalSend.ResumeLayout(false);
+            this.tableLayoutPanelTerminalSend.PerformLayout();
             this.tabPagePageTool.ResumeLayout(false);
             this.tabPagePageTool.PerformLayout();
             this.tabPage2.ResumeLayout(false);
@@ -2216,7 +2414,6 @@ namespace BK7231Flasher
         private System.Windows.Forms.RadioButton radioButtonReadRomTargetEfuse;
         private System.Windows.Forms.RadioButton radioButtonReadRomTargetOtp;
         private System.Windows.Forms.RadioButton radioButtonReadRomTargetRom;
-        private System.Windows.Forms.Label labelReadRomState;
         private System.Windows.Forms.Label labelReadRomBaud;
         private System.Windows.Forms.ComboBox comboBoxReadRomBaudRate;
         private System.Windows.Forms.Label labelReadRomPlatform;
@@ -2245,7 +2442,6 @@ namespace BK7231Flasher
         private System.Windows.Forms.Button buttonStop;
         private System.Windows.Forms.Button buttonClearLog;
         private System.Windows.Forms.Button buttonWriteOnly;
-        private System.Windows.Forms.Label labelState;
         private System.Windows.Forms.TabPage tabPage3;
         private System.Windows.Forms.Label label9;
         private System.Windows.Forms.Label label8;
@@ -2343,7 +2539,6 @@ namespace BK7231Flasher
         private System.Windows.Forms.ComboBox comboBox1;
         private System.Windows.Forms.CheckBox chkIgnoreCRCErr;
         private System.Windows.Forms.Button buttonBlankCheck;
-        private System.Windows.Forms.Button buttonVerify;
         private System.Windows.Forms.Button buttonDetect;
         private System.Windows.Forms.TabPage tabDecryption;
         private System.Windows.Forms.Button btnSelectFirmware;
@@ -2372,6 +2567,22 @@ namespace BK7231Flasher
         private System.Windows.Forms.Button btnLoadDefaultNPartitions;
         private System.Windows.Forms.CheckBox chkSkipDecrc;
 		private System.Windows.Forms.CheckBox chkUseCompression;
-	}
+        private System.Windows.Forms.TabPage tabPageTerminal;
+        private System.Windows.Forms.TableLayoutPanel tableLayoutPanelTerminalSend;
+        private System.Windows.Forms.TextBox textBoxTerminalCommand;
+        private System.Windows.Forms.ComboBox comboBoxTerminalLineEnding;
+        private System.Windows.Forms.Button buttonTerminalSend;
+        private System.Windows.Forms.RichTextBox textBoxTerminalLog;
+        private System.Windows.Forms.CheckBox checkBoxVerifyBackupWrite;
+        private System.Windows.Forms.Label labelTerminalPort;
+        private System.Windows.Forms.ComboBox comboBoxTerminalPort;
+        private System.Windows.Forms.Label labelTerminalStatus;
+        private System.Windows.Forms.Label labelTerminalBaud;
+        private System.Windows.Forms.CheckBox checkBoxTerminalAutoScroll;
+        private System.Windows.Forms.ComboBox comboBoxTerminalBaud;
+        private System.Windows.Forms.Button buttonTerminalClear;
+        private System.Windows.Forms.Button buttonTerminalConnect;
+        private System.Windows.Forms.CheckBox checkBoxTerminalAutoReconnect;
+    }
 }
 

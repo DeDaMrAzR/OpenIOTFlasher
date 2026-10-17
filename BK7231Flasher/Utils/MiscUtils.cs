@@ -4,6 +4,32 @@ namespace BK7231Flasher
 {
     public class MiscUtils
     {
+        internal static string getExecutableBackupsPath()
+        {
+            return System.IO.Path.GetFullPath(System.IO.Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "backups"));
+        }
+
+        internal static bool isCanonicalFileInDirectory(string filePath, string directoryPath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath) || string.IsNullOrWhiteSpace(directoryPath))
+                return false;
+            try
+            {
+                string directory = System.IO.Path.GetFullPath(directoryPath)
+                    .TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+                string file = System.IO.Path.GetFullPath(filePath);
+                string prefix = directory + System.IO.Path.DirectorySeparatorChar;
+                return file.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(System.IO.Path.GetDirectoryName(file), directory,
+                        StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public static string formatDateNowFileNameBase()
         {
             string r = DateTime.Now.ToString("yyyy-dd-M-HH-mm-ss"); ;

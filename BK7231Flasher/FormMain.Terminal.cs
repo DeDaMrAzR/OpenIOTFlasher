@@ -1,24 +1,27 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO.Ports;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace BK7231Flasher
 {
     public partial class FormMain : Form, ILogListener
     {
-        private TabPage tabPageTerminal;
-        private ComboBox comboBoxTerminalPort;
-        private ComboBox comboBoxTerminalBaud;
-        private ComboBox comboBoxTerminalLineEnding;
-        private Button buttonTerminalConnect;
-        private Button buttonTerminalClear;
-        private Button buttonTerminalSend;
-		private CheckBox checkBoxTerminalAutoScroll;
-        private Label labelTerminalStatus;
-        private RichTextBox textBoxTerminalLog;
-        private TextBox textBoxTerminalCommand;
+		private bool terminalReconnectWanted;
+		private bool terminalClosing;
+		private string terminalReconnectPort;
+		private int terminalReconnectBaud;
+		private DateTime terminalNextReconnectUtc;
+		private string terminalReconnectError;
+		private int terminalConnectionGeneration;
+		private int terminalOpeningGeneration;
+		private SerialPort terminalOpeningPort;
+		private Task terminalOpenTask;
+		private readonly List<Task> terminalFlasherTasks = new List<Task>();
+		private int terminalFlasherReservations;
         private SerialPort terminalSerialPort;
         private readonly object terminalReceiveLock = new object();
         private readonly StringBuilder terminalPreConnectText = new StringBuilder();
@@ -26,157 +29,31 @@ namespace BK7231Flasher
         private bool terminalPendingCarriageReturn;
         private bool terminalPreviousWasLineBreak;
 
-        private void InitializeTerminalTab()
-        {
-            tabPageTerminal = new TabPage
-            {
-                Text = "Terminal",
-                UseVisualStyleBackColor = true,
-                Padding = new Padding(8),
-            };
+		private void InitializeTerminalTab()
+		{
+			comboBoxTerminalLineEnding.SelectedIndex = 1;
+			ConfigureLogContextMenu(textBoxTerminalLog);
+		}
 
-            FlowLayoutPanel connectionBar = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Top,
-                Height = 34,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                Padding = new Padding(0),
-            };
+		private void ComboBoxTerminalPort_SelectionChangeCommitted(object sender, EventArgs e)
+		{
+			CancelTerminalReconnect();
+			SetTerminalConnectedState(IsTerminalConnected);
+		}
 
-            connectionBar.Controls.Add(new Label
-            {
-                Text = "COM port:",
-                AutoSize = true,
-                Padding = new Padding(0, 6, 0, 0),
-            });
+		private void CheckBoxTerminalAutoReconnect_CheckedChanged(object sender, EventArgs e)
+		{
+			if (!checkBoxTerminalAutoReconnect.Checked)
+				CancelTerminalReconnect();
+			else if (IsTerminalConnected)
+				RememberTerminalReconnectSettings();
+			SetTerminalConnectedState(IsTerminalConnected);
+		}
 
-            comboBoxTerminalPort = new ComboBox
-            {
-                Width = 110,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-            };
-            connectionBar.Controls.Add(comboBoxTerminalPort);
-
-            connectionBar.Controls.Add(new Label
-            {
-                Text = "Baud:",
-                AutoSize = true,
-                Padding = new Padding(8, 6, 0, 0),
-            });
-
-            comboBoxTerminalBaud = new ComboBox
-            {
-                Width = 100,
-                DropDownStyle = ComboBoxStyle.DropDown,
-                Text = "115200",
-            };
-            comboBoxTerminalBaud.Items.AddRange(new object[]
-            {
-                9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
-                1500000, 2000000, 3000000,
-            });
-			comboBoxTerminalBaud.SelectionChangeCommitted += ComboBoxTerminalBaud_SelectionChangeCommitted;
-            connectionBar.Controls.Add(comboBoxTerminalBaud);
-
-            buttonTerminalConnect = new Button
-            {
-                Text = "Connect",
-                AutoSize = true,
-                Height = 26,
-            };
-            buttonTerminalConnect.Click += ButtonTerminalConnect_Click;
-            connectionBar.Controls.Add(buttonTerminalConnect);
-
-            buttonTerminalClear = new Button
-            {
-                Text = "Clear",
-                AutoSize = true,
-                Height = 26,
-            };
-            buttonTerminalClear.Click += (sender, e) => textBoxTerminalLog.Clear();
-            connectionBar.Controls.Add(buttonTerminalClear);
-
-			checkBoxTerminalAutoScroll = new CheckBox
-			{
-				Text = "Auto-scroll",
-				AutoSize = true,
-				Checked = true,
-				Padding = new Padding(8, 5, 0, 0),
-			};
-			connectionBar.Controls.Add(checkBoxTerminalAutoScroll);
-
-            labelTerminalStatus = new Label
-            {
-                Text = "Disconnected",
-                AutoSize = true,
-                AutoEllipsis = true,
-                Padding = new Padding(8, 6, 0, 0),
-            };
-            connectionBar.Controls.Add(labelTerminalStatus);
-
-            TableLayoutPanel sendBar = new TableLayoutPanel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 34,
-                ColumnCount = 3,
-                RowCount = 1,
-                Padding = new Padding(0, 4, 0, 0),
-            };
-            sendBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            sendBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80F));
-            sendBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80F));
-
-            textBoxTerminalCommand = new TextBox
-            {
-                Dock = DockStyle.Fill,
-            };
-            textBoxTerminalCommand.KeyDown += TextBoxTerminalCommand_KeyDown;
-
-            comboBoxTerminalLineEnding = new ComboBox
-            {
-                Dock = DockStyle.Fill,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-            };
-            comboBoxTerminalLineEnding.Items.AddRange(new object[] { "CRLF", "LF", "CR", "None" });
-            comboBoxTerminalLineEnding.SelectedIndex = 1;
-
-            buttonTerminalSend = new Button
-            {
-                Text = "Send",
-                Dock = DockStyle.Fill,
-                Enabled = false,
-            };
-            buttonTerminalSend.Click += ButtonTerminalSend_Click;
-
-            sendBar.Controls.Add(textBoxTerminalCommand, 0, 0);
-            sendBar.Controls.Add(comboBoxTerminalLineEnding, 1, 0);
-            sendBar.Controls.Add(buttonTerminalSend, 2, 0);
-
-            textBoxTerminalLog = new RichTextBox
-            {
-                Dock = DockStyle.Fill,
-                ReadOnly = true,
-                WordWrap = false,
-                DetectUrls = false,
-                BackColor = SystemColors.Window,
-                Font = new Font(FontFamily.GenericMonospace, 9.0f),
-            };
-            ConfigureLogContextMenu(textBoxTerminalLog);
-
-            tabPageTerminal.Controls.Add(textBoxTerminalLog);
-            tabPageTerminal.Controls.Add(sendBar);
-            tabPageTerminal.Controls.Add(connectionBar);
-            EnsureTerminalTabPresent();
-        }
-
-        private void EnsureTerminalTabPresent()
-        {
-            if (tabPageTerminal == null || tabControl1.TabPages.Contains(tabPageTerminal))
-                return;
-
-            tabControl1.TabPages.Insert(Math.Min(2, tabControl1.TabPages.Count), tabPageTerminal);
-        }
+		private void ButtonTerminalClear_Click(object sender, EventArgs e)
+		{
+			textBoxTerminalLog.Clear();
+		}
 
         private bool IsTerminalConnected
         {
@@ -195,6 +72,12 @@ namespace BK7231Flasher
 
         private bool EnsureTerminalPortAvailableForOperation(string requestedPort)
         {
+			if (terminalOpenTask != null)
+			{
+				MessageBox.Show(this, "Terminal is finishing a connection attempt. Please retry the operation.",
+					"Terminal connection pending", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				return false;
+			}
             if (!IsTerminalConnected
                 || !string.Equals(terminalSerialPort.PortName, requestedPort, StringComparison.OrdinalIgnoreCase))
             {
@@ -213,8 +96,7 @@ namespace BK7231Flasher
                 return false;
             }
 
-            AppendTerminalLine("Disconnected from " + requestedPort + " for flasher operation.", Color.DarkOrange);
-            DisconnectTerminal(false);
+			DisconnectTerminal();
             return true;
         }
 
@@ -241,15 +123,13 @@ namespace BK7231Flasher
 
                 if (!connectedPortStillPresent || !connectionStillOpen)
                 {
-                    AppendTerminalLine("COM port disconnected", Color.Red);
-                    DisconnectTerminal(false);
+					DisconnectTerminal();
                 }
             }
 
-            if (TerminalPortListMatches(ports))
-                return;
-
-            setPortComboBoxItems(comboBoxTerminalPort, ports, previousPort);
+			if (!TerminalPortListMatches(ports))
+				setPortComboBoxItems(comboBoxTerminalPort, ports, previousPort);
+			TryTerminalReconnect(ports);
         }
 
         private bool TerminalPortListMatches(string[] ports)
@@ -267,11 +147,17 @@ namespace BK7231Flasher
 
         private void ButtonTerminalConnect_Click(object sender, EventArgs e)
         {
-            if (terminalSerialPort != null)
+			if (terminalSerialPort != null || terminalReconnectWanted || terminalOpenTask != null)
             {
-                DisconnectTerminal(true);
+				CancelTerminalReconnect();
+				DisconnectTerminal();
                 return;
             }
+			if (TerminalFlasherBusy)
+			{
+				labelTerminalStatus.Text = "Waiting for flasher operation to finish";
+				return;
+			}
 
             string portName = getSelectedSerialName(comboBoxTerminalPort);
             if (string.IsNullOrWhiteSpace(portName))
@@ -287,39 +173,138 @@ namespace BK7231Flasher
                 return;
             }
 
-            SerialPort port = new SerialPort(portName, baudRate, Parity.None, 8, StopBits.One)
-            {
-                Handshake = Handshake.None,
-                Encoding = Encoding.ASCII,
-                ReadTimeout = 500,
-                WriteTimeout = 500,
-            };
-            lock (terminalReceiveLock)
-            {
-                terminalConnectionAnnounced = false;
-                terminalPendingCarriageReturn = false;
-                terminalPreviousWasLineBreak = false;
-                terminalPreConnectText.Clear();
-            }
-            port.DataReceived += TerminalSerialPort_DataReceived;
-            terminalSerialPort = port;
-
-            try
-            {
-                port.Open();
-                SetTerminalConnectedState(true);
-                AppendTerminalLine("Connected to " + portName + " at " + baudRate + " baud.", Color.Green);
-                FlushTerminalPreConnectText();
-                textBoxTerminalCommand.Focus();
-            }
-            catch (Exception ex)
-            {
-                terminalSerialPort = null;
-                port.DataReceived -= TerminalSerialPort_DataReceived;
-                port.Dispose();
-                AppendTerminalLine("Unable to open " + portName + ": " + ex.Message, Color.Red);
-            }
+			OpenTerminalPortAsync(portName, baudRate, false);
         }
+
+		private bool TerminalFlasherBusy => terminalFlasherReservations != 0 || worker != null
+			|| terminalFlasherTasks.Exists(task => !task.IsCompleted)
+			|| flasher != null || sv6x66OperationLockActive;
+
+		private sealed class TerminalFlasherReservation : IDisposable
+		{
+			private FormMain owner;
+			internal TerminalFlasherReservation(FormMain owner)
+			{
+				this.owner = owner;
+				owner.terminalFlasherReservations++;
+				owner.InvalidateTerminalOpening();
+			}
+			public void Dispose()
+			{
+				if (owner == null)
+					return;
+				owner.terminalFlasherReservations--;
+				owner = null;
+			}
+		}
+
+		private void InvalidateTerminalOpening()
+		{
+			terminalConnectionGeneration++;
+			SerialPort opening = terminalOpeningPort;
+			if (opening != null)
+				Task.Run(() => DisposeTerminalPort(opening));
+		}
+
+		private void CancelTerminalReconnect()
+		{
+			terminalReconnectWanted = false;
+			terminalReconnectError = null;
+			InvalidateTerminalOpening();
+		}
+
+		private void RememberTerminalReconnectSettings()
+		{
+			terminalReconnectPort = terminalSerialPort.PortName;
+			terminalReconnectBaud = terminalSerialPort.BaudRate;
+			terminalReconnectWanted = checkBoxTerminalAutoReconnect.Checked;
+			terminalReconnectError = null;
+		}
+
+		private void TryTerminalReconnect(string[] ports)
+		{
+			if (terminalClosing || !terminalReconnectWanted || IsTerminalConnected)
+				return;
+			UpdateTerminalStatus(false);
+			if (TerminalFlasherBusy || terminalOpenTask != null || DateTime.UtcNow < terminalNextReconnectUtc
+				|| Array.IndexOf(ports, terminalReconnectPort) < 0)
+				return;
+			terminalNextReconnectUtc = DateTime.UtcNow.AddSeconds(1);
+			OpenTerminalPortAsync(terminalReconnectPort, terminalReconnectBaud, true);
+		}
+
+		private static void DisposeTerminalPort(SerialPort port)
+		{
+			try { port.Dispose(); } catch { }
+		}
+
+		private async void OpenTerminalPortAsync(string portName, int baudRate, bool automatic)
+		{
+			if (terminalClosing || terminalOpenTask != null || TerminalFlasherBusy)
+				return;
+			int generation = ++terminalConnectionGeneration;
+			terminalOpeningGeneration = generation;
+			SerialPort port = null;
+			Task opening = null;
+			try
+			{
+				port = new SerialPort(portName, baudRate, Parity.None, 8, StopBits.One)
+				{
+					Handshake = Handshake.None,
+					Encoding = Encoding.ASCII,
+					ReadTimeout = 500,
+					WriteTimeout = 500,
+				};
+				terminalOpeningPort = port;
+				opening = Task.Run(() => port.Open());
+				terminalOpenTask = opening;
+				SetTerminalConnectedState(false);
+				await opening;
+				if (terminalClosing || generation != terminalConnectionGeneration || TerminalFlasherBusy
+					|| (automatic && !terminalReconnectWanted))
+					return;
+				lock (terminalReceiveLock)
+				{
+					terminalConnectionAnnounced = false;
+					terminalPendingCarriageReturn = false;
+					terminalPreviousWasLineBreak = false;
+					terminalPreConnectText.Clear();
+					terminalSerialPort = port;
+					port.DataReceived += TerminalSerialPort_DataReceived;
+					AppendTerminalReceivedText(port.ReadExisting());
+					FlushTerminalPreConnectText();
+				}
+				RememberTerminalReconnectSettings();
+				setComboBoxValueByContent(comboBoxTerminalPort, portName);
+				comboBoxTerminalBaud.Text = baudRate.ToString();
+				SetTerminalConnectedState(true);
+				if (!automatic)
+					textBoxTerminalCommand.Focus();
+			}
+			catch (Exception exception)
+			{
+				if (!terminalClosing && generation == terminalConnectionGeneration)
+				{
+					if (port != null && terminalSerialPort == port)
+						DisconnectTerminal();
+					if (automatic)
+						terminalReconnectError = exception.Message;
+					else
+						AppendTerminalLine("Unable to open " + portName + ": " + exception.Message, Color.Red);
+				}
+			}
+			finally
+			{
+				if (port != null && terminalSerialPort != port)
+					await Task.Run(() => DisposeTerminalPort(port));
+				if (terminalOpeningPort == port)
+					terminalOpeningPort = null;
+				if (terminalOpenTask == opening)
+					terminalOpenTask = null;
+				if (!terminalClosing && !IsDisposed && !Disposing)
+					SetTerminalConnectedState(IsTerminalConnected);
+			}
+		}
 
 		private void ComboBoxTerminalBaud_SelectionChangeCommitted(object sender, EventArgs e)
 		{
@@ -342,6 +327,7 @@ namespace BK7231Flasher
 			try
 			{
 				port.BaudRate = newBaudRate;
+				RememberTerminalReconnectSettings();
 				comboBoxTerminalBaud.Text = port.BaudRate.ToString();
 				UpdateTerminalStatus(true);
 				AppendTerminalLine(
@@ -372,9 +358,14 @@ namespace BK7231Flasher
 
             try
             {
-                string received = port.ReadExisting();
-                if (!string.IsNullOrEmpty(received))
-                    AppendTerminalReceivedText(received);
+				lock (terminalReceiveLock)
+				{
+					if (port != terminalSerialPort)
+						return;
+					string received = port.ReadExisting();
+					if (!string.IsNullOrEmpty(received))
+						AppendTerminalReceivedText(received);
+				}
             }
             catch (Exception ex)
             {
@@ -388,7 +379,7 @@ namespace BK7231Flasher
                         if (port != terminalSerialPort)
                             return;
                         AppendTerminalLine("Receive failed: " + ex.Message, Color.Red);
-                        DisconnectTerminal(false);
+						DisconnectTerminal();
                     });
                 }
                 catch (InvalidOperationException)
@@ -449,11 +440,11 @@ namespace BK7231Flasher
             catch (Exception ex)
             {
                 AppendTerminalLine("Send failed: " + ex.Message, Color.Red);
-                DisconnectTerminal(false);
+				DisconnectTerminal();
             }
         }
 
-        private void DisconnectTerminal(bool reportDisconnect)
+		private void DisconnectTerminal()
         {
             SerialPort port = terminalSerialPort;
             terminalSerialPort = null;
@@ -487,28 +478,33 @@ namespace BK7231Flasher
             }
 
             SetTerminalConnectedState(false);
-            if (reportDisconnect)
-                AppendTerminalLine("Disconnected.", Color.DarkOrange);
         }
 
         private void CloseTerminalPort()
         {
-            DisconnectTerminal(false);
+			terminalClosing = true;
+			CancelTerminalReconnect();
+			DisconnectTerminal();
         }
 
         private void SetTerminalConnectedState(bool connected)
         {
-            comboBoxTerminalPort.Enabled = !connected;
-			comboBoxTerminalBaud.Enabled = true;
-            buttonTerminalConnect.Text = connected ? "Disconnect" : "Connect";
+			comboBoxTerminalPort.Enabled = !connected && terminalOpenTask == null;
+			comboBoxTerminalBaud.Enabled = connected || (!terminalReconnectWanted && terminalOpenTask == null);
+			buttonTerminalConnect.Text = connected || terminalReconnectWanted || terminalOpenTask != null ? "Disconnect" : "Connect";
             buttonTerminalSend.Enabled = connected;
 			UpdateTerminalStatus(connected);
+			enforceSv6x66OperationLock();
         }
 
 		private void UpdateTerminalStatus(bool connected)
 		{
 			labelTerminalStatus.Text = connected
 				? "Connected at " + terminalSerialPort.BaudRate + " baud"
+				: terminalOpenTask != null ? (terminalOpeningGeneration == terminalConnectionGeneration ? "Connecting..." : "Disconnecting...")
+				: terminalReconnectWanted && TerminalFlasherBusy ? "Reconnect paused for flasher operation"
+				: terminalReconnectWanted ? "Waiting for " + terminalReconnectPort
+					+ (string.IsNullOrWhiteSpace(terminalReconnectError) ? "" : ": " + terminalReconnectError)
 				: "Disconnected";
 			labelTerminalStatus.ForeColor = connected ? Color.DarkGreen : SystemColors.ControlText;
 		}

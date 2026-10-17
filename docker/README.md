@@ -1,6 +1,6 @@
 # Docker Build (Linux / Mono)
 
-This folder provides a Docker-based build environment for OpenIOT flasher.
+This folder provides a Docker-based build environment for OpenIOTFlasher.
 
 It allows building the project on Linux without requiring Windows or Visual Studio.
 

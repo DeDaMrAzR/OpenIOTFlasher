@@ -466,6 +466,11 @@ namespace BK7231Flasher
 
         public override void doRead(int startSector = 0x000, int sectors = 10, bool fullRead = false)
         {
+			if (finalReadbackVerification.HasValue)
+			{
+				ms?.Dispose();
+				ms = null;
+			}
             if (doGenericSetup() == false)
             {
                 return;
@@ -491,10 +496,53 @@ namespace BK7231Flasher
             return false;
         }
 
+		bool VerifyFinalReadback(uint address, byte[] expected, string operation)
+		{
+			if (!finalReadbackVerification.HasValue)
+				return true;
+			if (!finalReadbackVerification.Value)
+			{
+				addLogLine(operation + " final readback skipped.");
+				return true;
+			}
+			try
+			{
+				if (expected == null || expected.Length == 0 || flashSize <= 0
+					|| (ulong)address + (ulong)expected.Length > (ulong)flashSize
+					|| (ulong)address + (ulong)expected.Length > 0x1000000UL)
+					throw new IOException("Final readback range is outside the SPI flash/address bounds.");
+				addLogLine(operation + " final readback...");
+				for (int offset = 0; offset < expected.Length; offset += 4096)
+				{
+					cancellationToken.ThrowIfCancellationRequested();
+					if (isCancelled)
+						throw new OperationCanceledException();
+					int length = Math.Min(4096, expected.Length - offset);
+					byte[] actual = ReadFlash(address + (uint)offset, length, true);
+					if (actual == null || actual.Length != length)
+						throw new IOException("Final SPI readback failed or returned an unexpected length.");
+					for (int index = 0; index < length; index++)
+						if (actual[index] != expected[offset + index])
+							throw new IOException("Final SPI readback differs at 0x" + (address + (uint)(offset + index)).ToString("X") + ".");
+					logger.setProgress(offset + length, expected.Length);
+				}
+				cancellationToken.ThrowIfCancellationRequested();
+				if (isCancelled)
+					throw new OperationCanceledException();
+				addSuccess(operation + " final readback passed." + Environment.NewLine);
+				return true;
+			}
+			catch (Exception exception)
+			{
+				addErrorLine(operation + " final readback failed: " + exception.Message);
+				return false;
+			}
+		}
+
         public bool doReadInternal(uint addr, int len)
         {
             byte[] res = ReadFlash(addr, len);
-            if(res != null)
+			if (res != null && VerifyFinalReadback(addr, res, "Backup"))
             {
                 ms = new MemoryStream(res);
             }
@@ -614,6 +662,8 @@ namespace BK7231Flasher
             if (rwMode == WriteMode.ReadAndWrite)
             {
                 doReadInternal(0, flashSize);
+				if (finalReadbackVerification.HasValue && ms == null)
+					return;
             }
             if (UnprotectFlash() == false)
             {
@@ -652,6 +702,8 @@ namespace BK7231Flasher
                 addErrorLine("SPI write failed.");
                 return;
             }
+			if (!VerifyFinalReadback(writeOffset, x, "Write"))
+				return;
             ChipReset();
         }
         bool saveReadResult(string fileName)

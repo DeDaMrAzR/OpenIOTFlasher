@@ -1,4 +1,4 @@
-name: Build and Release OpenIOT flasher
+name: Build and Release OpenIOTFlasher
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Set OpenIOT flasher version
+      - name: Set OpenIOTFlasher version
         shell: pwsh
         run: |
           $version = "1.0.0"
@@ -37,27 +37,34 @@ jobs:
       - name: Create output directory
         run: mkdir -p BuildOutput/Release
 
-      - name: Build OpenIOT flasher
+      - name: Build OpenIOTFlasher
         shell: pwsh
         run: msbuild BK7231Flasher/BK7231Flasher.csproj /p:Configuration=Release /p:OutDir=BuildOutput\Release\ /p:FLASHERVERSION=$env:FLASHERVERSION
 
-      - name: Set OpenIOT flasher executable name
+      - name: Set OpenIOTFlasher executable name
         shell: pwsh
         run: |
           $outputDirectory = "BK7231Flasher/BuildOutput/Release"
           $sourceExecutable = Join-Path $outputDirectory "OpenIOT_flasher.exe"
-          $releaseExecutable = Join-Path $outputDirectory "OpenIOTflasher.exe"
+          $releaseExecutable = Join-Path $outputDirectory "OpenIOTFlasher.exe"
+          $sourceConfiguration = Join-Path $outputDirectory "OpenIOT_flasher.exe.config"
+          $releaseConfiguration = Join-Path $outputDirectory "OpenIOTFlasher.exe.config"
           if (-not (Test-Path -LiteralPath $sourceExecutable)) {
             throw "Expected build output was not found: $sourceExecutable"
           }
+          if (-not (Test-Path -LiteralPath $sourceConfiguration)) {
+            throw "Expected executable configuration was not found: $sourceConfiguration"
+          }
           Move-Item -LiteralPath $sourceExecutable -Destination $releaseExecutable
+          Move-Item -LiteralPath $sourceConfiguration -Destination $releaseConfiguration
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: OpenIOT-flasher
+          name: OpenIOTFlasher
           path: |
             BK7231Flasher/BuildOutput/Release/*.exe
+            BK7231Flasher/BuildOutput/Release/*.exe.config
             BK7231Flasher/BuildOutput/Release/*.dll
           if-no-files-found: error
 
@@ -70,22 +77,22 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v7
         with:
-          name: OpenIOT-flasher
+          name: OpenIOTFlasher
           path: BuildOutput/Release
 
-      - name: Package OpenIOT flasher
+      - name: Package OpenIOTFlasher
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path release -Force | Out-Null
-          Compress-Archive -Path "BuildOutput/Release/*" -DestinationPath "release/OpenIOT-flasher-${{ github.ref_name }}.zip"
+          Compress-Archive -Path "BuildOutput/Release/*" -DestinationPath "release/OpenIOTFlasher-${{ github.ref_name }}.zip"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
-          name: OpenIOT flasher ${{ github.ref_name }}
+          name: OpenIOTFlasher ${{ github.ref_name }}
           body: |
-            OpenIOT flasher ${{ github.ref_name }}.
+            OpenIOTFlasher ${{ github.ref_name }}.
           generate_release_notes: true
           draft: false
           prerelease: false
-          files: release/OpenIOT-flasher-${{ github.ref_name }}.zip
+          files: release/OpenIOTFlasher-${{ github.ref_name }}.zip

@@ -91,6 +91,7 @@ namespace BK7231Flasher
         protected bool bIgnoreCRCErr = false;
         protected bool bCustomWriteMode = false;
         protected bool bUseCompressionIfPossible = false;
+		protected bool? finalReadbackVerification;
         protected SerialPort serial;
         protected string serialName;
         protected BKType chipType = BKType.BK7231N;
@@ -341,6 +342,10 @@ namespace BK7231Flasher
         {
             bUseCompressionIfPossible = b;
         }
+		public void setFinalReadbackVerification(bool? enabled)
+		{
+			finalReadbackVerification = enabled;
+		}
 
         public void setOverwriteBootloader(bool b)
         {

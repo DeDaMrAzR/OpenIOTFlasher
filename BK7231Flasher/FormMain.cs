@@ -9,6 +9,10 @@ using System.IO.Ports;
 using System.Linq;
 using System.Net.Configuration;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -25,6 +29,21 @@ namespace BK7231Flasher
         int firmwareComboWidthAdvanced = -1;
         FormCustom formCustom;
         CancellationTokenSource cts;
+		volatile bool sv6x66OperationLockActive;
+		BKType activeOperationPlatform = BKType.Invalid;
+		TabPage sv6x66OperationLockedTab;
+		bool sv6x66OperationSavedAllowDrop;
+		readonly Dictionary<Control, bool> sv6x66OperationEnabledStates = new Dictionary<Control, bool>();
+		const int Sv6x66FullFlashBytes = 0x200000;
+		const string Sv6x66BackupPrefix = "readResult_SV6X66_";
+
+		sealed class Sv6x66RestoreRequest
+		{
+			internal string SourcePath;
+			internal byte[] Image;
+			internal string Sha256;
+			internal bool? FinalReadbackVerification;
+		}
 
         enum OperationUiTarget
         {
@@ -66,29 +85,21 @@ namespace BK7231Flasher
         {
             Singleton = this;
             InitializeComponent();
-            ConfigureStateLabel(labelState, textBoxLog);
-            ConfigureStateLabel(labelReadRomState, buttonReadRomClearLog);
+			tabControl1.Selecting += tabControl1_Selecting;
             ConfigureLogContextMenu(textBoxLog);
             ConfigureLogContextMenu(textBoxReadRomLog);
             InitializeBl602IoExtractorTab();
             InitializeTerminalTab();
+			ConfigurePortDisplay(comboBoxUART);
+			ConfigurePortDisplay(comboBoxReadRomUART);
+			ConfigurePortDisplay(comboBoxTerminalPort);
             var version = Assembly.GetExecutingAssembly().GetCustomAttribute<BuildVersion>().Value;
             Text = $"OpenIOT flasher {(string.IsNullOrWhiteSpace(version) ? "local" : version)}";
         }
 
-        void ConfigureStateLabel(Label stateLabel, Control rightBoundary)
-        {
-            int labelHeight = stateLabel.Height;
-            stateLabel.AutoSize = false;
-            stateLabel.AutoEllipsis = true;
-            stateLabel.Size = new Size(
-                Math.Max(1, rightBoundary.Left - stateLabel.Left - 8),
-                labelHeight);
-            stateLabel.TextAlign = ContentAlignment.MiddleLeft;
-        }
-
         void ConfigureLogContextMenu(RichTextBox logTextBox)
         {
+			logTextBox.ReadOnly = true;
             ContextMenuStrip contextMenu = new ContextMenuStrip(components);
             ToolStripMenuItem copyItem = new ToolStripMenuItem("Copy");
             ToolStripMenuItem selectAllItem = new ToolStripMenuItem("Select all");
@@ -113,6 +124,135 @@ namespace BK7231Flasher
             return firmwaresPath;
         }
         string[] allPorts;
+
+		bool SupportsFinalReadbackOption()
+		{
+			return curType == BKType.SV6X66 || curType == BKType.BekenSPI || curType == BKType.GenericSPI;
+		}
+
+		bool? CaptureFinalReadbackOption()
+		{
+			return SupportsFinalReadbackOption() ? (bool?)checkBoxVerifyBackupWrite.Checked : null;
+		}
+
+		void UpdateFinalReadbackControl(bool operationControlsEnabled = true)
+		{
+			checkBoxVerifyBackupWrite.Enabled = operationControlsEnabled && worker == null
+				&& !terminalFlasherTasks.Exists(task => !task.IsCompleted)
+				&& !sv6x66OperationLockActive && SupportsFinalReadbackOption();
+		}
+		Dictionary<string, string> portDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+		[StructLayout(LayoutKind.Sequential)]
+		struct PortDeviceInfo
+		{
+			internal int Size;
+			internal Guid ClassGuid;
+			internal uint DeviceInstance;
+			internal IntPtr Reserved;
+		}
+
+		[DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+		static extern IntPtr SetupDiGetClassDevsW(ref Guid classGuid, IntPtr enumerator, IntPtr parent, uint flags);
+		[DllImport("setupapi.dll", SetLastError = true)]
+		static extern bool SetupDiEnumDeviceInfo(IntPtr deviceSet, uint index, ref PortDeviceInfo deviceInfo);
+		[DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+		static extern bool SetupDiGetDeviceRegistryPropertyW(IntPtr deviceSet, ref PortDeviceInfo deviceInfo,
+			uint property, out uint registryType, byte[] buffer, uint bufferSize, out uint requiredSize);
+		[DllImport("setupapi.dll", SetLastError = true)]
+		static extern IntPtr SetupDiOpenDevRegKey(IntPtr deviceSet, ref PortDeviceInfo deviceInfo,
+			uint scope, uint hardwareProfile, uint keyType, uint access);
+		[DllImport("setupapi.dll", SetLastError = true)]
+		static extern bool SetupDiDestroyDeviceInfoList(IntPtr deviceSet);
+
+		void ConfigurePortDisplay(ComboBox comboBox)
+		{
+			comboBox.FormattingEnabled = true;
+			comboBox.Format += FormatPortDisplay;
+		}
+
+		void FormatPortDisplay(object sender, ListControlConvertEventArgs e)
+		{
+			string port = e.ListItem as string;
+			if (port != null && portDescriptions.TryGetValue(port, out string description))
+				e.Value = port + " - " + description;
+		}
+
+		static string ReadPortDeviceDescription(IntPtr deviceSet, ref PortDeviceInfo deviceInfo, uint property)
+		{
+			byte[] buffer = new byte[2048];
+			if (!SetupDiGetDeviceRegistryPropertyW(deviceSet, ref deviceInfo, property,
+				out uint registryType, buffer, (uint)buffer.Length, out uint requiredSize)
+				|| registryType != 1 || requiredSize < 2 || requiredSize > buffer.Length)
+				return "";
+			return Encoding.Unicode.GetString(buffer, 0, (int)requiredSize).TrimEnd('\0').Trim();
+		}
+
+		static Dictionary<string, string> ReadPortDescriptions(string[] ports)
+		{
+			var descriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			var requestedPorts = new HashSet<string>(ports, StringComparer.OrdinalIgnoreCase);
+			if (requestedPorts.Count == 0)
+				return descriptions;
+			try
+			{
+				foreach (Guid deviceClass in new[] {
+					new Guid("4d36e978-e325-11ce-bfc1-08002be10318"),
+					new Guid("4d36e96d-e325-11ce-bfc1-08002be10318") })
+				{
+					Guid classGuid = deviceClass;
+					IntPtr deviceSet = SetupDiGetClassDevsW(ref classGuid, IntPtr.Zero, IntPtr.Zero, 2);
+					if (deviceSet == new IntPtr(-1))
+						continue;
+					try
+					{
+						for (uint index = 0; ; index++)
+						{
+							var deviceInfo = new PortDeviceInfo { Size = Marshal.SizeOf(typeof(PortDeviceInfo)) };
+							if (!SetupDiEnumDeviceInfo(deviceSet, index, ref deviceInfo))
+								break;
+							try
+							{
+								IntPtr keyHandle = SetupDiOpenDevRegKey(deviceSet, ref deviceInfo, 1, 0, 1, 0x20019);
+								if (keyHandle == new IntPtr(-1))
+									continue;
+								using (var safeHandle = new Microsoft.Win32.SafeHandles.SafeRegistryHandle(keyHandle, true))
+								using (var key = Microsoft.Win32.RegistryKey.FromHandle(safeHandle))
+								{
+									string port = key.GetValue("PortName") as string;
+									if (port == null || !requestedPorts.Contains(port))
+										continue;
+									string description = ReadPortDeviceDescription(deviceSet, ref deviceInfo, 12);
+									if (string.IsNullOrWhiteSpace(description))
+										description = ReadPortDeviceDescription(deviceSet, ref deviceInfo, 0);
+									description = Regex.Replace(description, @"\s*\(" + Regex.Escape(port) + @"\)",
+										"", RegexOptions.IgnoreCase).Trim();
+									Match chip = Regex.Match(description, @"\b(CH(?:340|342|9102)|CP210(?:[0-9]+|X))\b",
+										RegexOptions.IgnoreCase);
+									if (chip.Success)
+										description = chip.Value.StartsWith("CP210", StringComparison.OrdinalIgnoreCase)
+											? "CP210x" : chip.Value.ToUpperInvariant();
+									if (!string.IsNullOrWhiteSpace(description)
+										&& !string.Equals(description, port, StringComparison.OrdinalIgnoreCase))
+										descriptions[port] = description;
+								}
+							}
+							catch
+							{
+							}
+						}
+					}
+					finally
+					{
+						SetupDiDestroyDeviceInfoList(deviceSet);
+					}
+				}
+			}
+			catch
+			{
+			}
+			return descriptions;
+		}
 
         void setPorts(string [] newPorts)
         {
@@ -139,6 +279,7 @@ namespace BK7231Flasher
 
             string prevPort = getComboBoxSelectedText(comboBoxUART);
             string prevReadRomPort = getComboBoxSelectedText(comboBoxReadRomUART);
+			portDescriptions = ReadPortDescriptions(newPorts);
             allPorts = newPorts;
             setPortComboBoxItems(comboBoxUART, allPorts, prevPort);
             setPortComboBoxItems(comboBoxReadRomUART, allPorts, prevReadRomPort);
@@ -175,6 +316,54 @@ namespace BK7231Flasher
             setPorts(newPorts);
         }
         string backupsPath = "backups";
+		string getSv6x66BackupDirectory()
+		{
+			return MiscUtils.getExecutableBackupsPath();
+		}
+
+		bool tryGetSv6x66RestorePath(out string fullPath)
+		{
+			fullPath = "";
+			if (comboBoxFirmware.SelectedItem == null)
+				return false;
+			string fileName = comboBoxFirmware.SelectedItem.ToString();
+			if (!fileName.StartsWith(Sv6x66BackupPrefix, StringComparison.Ordinal)
+				|| !fileName.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)
+				|| Path.GetFileName(fileName) != fileName)
+				return false;
+			string backupDirectory = getSv6x66BackupDirectory();
+			string candidate = Path.GetFullPath(Path.Combine(backupDirectory, fileName));
+			if (!MiscUtils.isCanonicalFileInDirectory(candidate, backupDirectory))
+				return false;
+			try
+			{
+				if (!File.Exists(candidate) || new FileInfo(candidate).Length != Sv6x66FullFlashBytes)
+					return false;
+			}
+			catch
+			{
+				return false;
+			}
+			fullPath = candidate;
+			return true;
+		}
+
+		bool isSv6x66RestoreSelectionEligible()
+		{
+			string unusedPath;
+			return curType == BKType.SV6X66
+				&& worker == null
+				&& checkBoxShowAdvanced.Checked
+				&& checkBoxAllowBackup.Checked
+				&& tryGetSv6x66RestorePath(out unusedPath);
+		}
+
+		static string sha256Hex(byte[] data)
+		{
+			using (SHA256 sha256 = SHA256.Create())
+				return string.Concat(sha256.ComputeHash(data).Select(value => value.ToString("x2")));
+		}
+
         private void Control_DragEnter(object sender, DragEventArgs e)
         {
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
@@ -221,7 +410,6 @@ namespace BK7231Flasher
             //// t.extractKeys();
 
             tabControl1.TabPages.Remove(tabPagePageTool);
-            EnsureTerminalTabPresent();
             if (Directory.Exists(backupsPath) == false)
             {
                 Directory.CreateDirectory(backupsPath);
@@ -460,11 +648,6 @@ namespace BK7231Flasher
             return currentOperationUiTarget == OperationUiTarget.ReadRom ? progressBarReadRom : progressBar1;
         }
 
-        Label getActiveStateLabel()
-        {
-            return currentOperationUiTarget == OperationUiTarget.ReadRom ? labelReadRomState : labelState;
-        }
-
         RichTextBox getActiveLogTextBox()
         {
             return currentOperationUiTarget == OperationUiTarget.ReadRom ? textBoxReadRomLog : textBoxLog;
@@ -483,11 +666,6 @@ namespace BK7231Flasher
         }
         public void setState(string s, Color col)
         {
-            Label activeStateLabel = getActiveStateLabel();
-            activeStateLabel.Invoke((MethodInvoker)delegate {
-                activeStateLabel.Text = s;
-                activeStateLabel.BackColor = col;
-            });
         }
         public void addLog(string s, Color col)
         {
@@ -562,11 +740,14 @@ namespace BK7231Flasher
 			if(comboBoxBaudRate.Items.Count == 0)
 				return;
 
+			bool fixedBaudList = curType == BKType.W600 || curType == BKType.SV6X66;
 			int[] baudRates = curType == BKType.W600
 				? BaudRates.Where(baud => baud != 1500000 && baud != 3000000).ToArray()
-				: BaudRates;
+				: curType == BKType.SV6X66
+					? BaudRates.Where(baud => baud != 3000000).ToArray()
+					: BaudRates;
 			object previousBaud = comboBoxBaudRate.SelectedItem;
-			comboBoxBaudRate.DropDownStyle = curType == BKType.W600
+			comboBoxBaudRate.DropDownStyle = fixedBaudList
 				? ComboBoxStyle.DropDownList
 				: ComboBoxStyle.DropDown;
 
@@ -579,7 +760,7 @@ namespace BK7231Flasher
 
 			if(previousBaud != null && comboBoxBaudRate.Items.Contains(previousBaud))
 				comboBoxBaudRate.SelectedItem = previousBaud;
-			else if(curType == BKType.W600)
+			else if(curType == BKType.W600 || curType == BKType.SV6X66)
 				comboBoxBaudRate.SelectedItem = 2000000;
 			else if(comboBoxBaudRate.Items.Count > 0)
 				comboBoxBaudRate.SelectedIndex = 0;
@@ -758,10 +939,14 @@ namespace BK7231Flasher
                         catch { }
                         //worker.Abort();
                     }
+					if (sv6x66OperationLockActive)
+					{
+						addOperationLogLine("Interrupted by user.", Color.DarkOrange);
+						return false;
+					}
                     worker = null;
                     //setButtonReadLabel(label_startRead);
                     setButtonStates(true);
-                    setState("Interrupted by user.", Color.Yellow);
                     addOperationLogLine("Interrupted by user.", Color.DarkOrange);
                 }
                 return false;
@@ -830,7 +1015,7 @@ namespace BK7231Flasher
             }
         }
         
-        void createFlasher()
+		void createFlasher(bool? finalReadback = null)
         {
             flasher = FlasherFactory.Create(curType, cts.Token);
             flasher.setBasic(this, serialName, curType, chosenBaudRate);
@@ -838,6 +1023,7 @@ namespace BK7231Flasher
             flasher.setSkipKeyCheck(checkBoxSkipKeyCheck.Checked);
             flasher.setIgnoreCRCErr(chkIgnoreCRCErr.Checked);
             flasher.setUseCompression(chkUseCompression.Checked);
+			flasher.setFinalReadbackVerification(finalReadback);
         }
         
         void testWrite()
@@ -875,10 +1061,10 @@ namespace BK7231Flasher
             clearUp();
             setButtonStates(true);
         }
-        void doBackupAndFlashNew()
+		void doBackupAndFlashNew(bool? finalReadback)
         {
             clearUp();
-            createFlasher();
+			createFlasher(finalReadback);
             flasher.setBackupName(lastBackupNameEnteredByUser);
             int startSector = getBackupStartSectorForCurrentPlatform();
             int sectors = getBackupSectorCountForCurrentPlatform();
@@ -890,6 +1076,8 @@ namespace BK7231Flasher
         }
         internal void doCustomWrite(CustomParms cp)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             showObkConfigFormIfPossible();
             if (doGenericOperationPreparations() == false)
             {
@@ -897,11 +1085,14 @@ namespace BK7231Flasher
             }
             //setButtonReadLabel(label_stopRead);
             startWorkerThread(doOnlyFlashNew, cp);
+			}
         }
-        void doOnlyFlashNew(object oParm)
+		void doOnlyFlashNew(object oParm) => doOnlyFlashNew(oParm, null);
+
+		void doOnlyFlashNew(object oParm, bool? finalReadback)
         {
             clearUp();
-            createFlasher();
+			createFlasher(finalReadback);
             int startSector;
             int sectors;
             CustomParms parms = null;
@@ -995,7 +1186,6 @@ namespace BK7231Flasher
             if (flasher is BK7231Flasher bkFlasher && bkFlasher.LastOperationSucceeded)
             {
                 addLog("RF partition restore completed." + Environment.NewLine, Color.Green);
-                setState("RF restore complete.", Color.Green);
             }
             worker = null;
             //setButtonReadLabel(label_startRead);
@@ -1004,12 +1194,15 @@ namespace BK7231Flasher
         }
         internal void restoreRFfromBackup(byte[] fileData)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             clearUp();
             if(doGenericOperationPreparations() == false)
             {
                 return;
             }
             startWorkerThread(restoreRFbkp, fileData);
+			}
         }
         void restoreRFbkp(object fileData)
         {
@@ -1056,46 +1249,14 @@ namespace BK7231Flasher
                 catch(Exception cleanEx) { addLog("Erase cleanup error: " + cleanEx.Message + Environment.NewLine, Color.Red); }
             }
         }
-        void verifyThread(object oParm)
-        {
-            if (!string.IsNullOrEmpty(chosenSourceFile))
-            {
-                byte[] verifyWith = File.ReadAllBytes(chosenSourceFile);
-                int sectors = (verifyWith.Length / 4096) + 1;
-                clearUp();
-                createFlasher();
-                int startSector = 0;
-                flasher.doRead(startSector, sectors, false);
+		void readThread(object oParm) => readThread(oParm, null);
 
-                byte[] data = flasher.getReadResult();
-                int errors = 0;
-                for (int i = 0; i < verifyWith.Length; i++)
-                {
-                    if (data[i] != verifyWith[i])
-                    {
-                        errors++;
-                    }
-                }
-                if (errors == 0)
-                {
-                    setState("Verify OK", Color.Green);
-                }
-                else
-                {
-                    setState("Verify bad", Color.Red);
-                }
-            }
-            else
-            {
-                setState("No file", Color.Red);
-            }
-            worker = null;
-            //setButtonReadLabel(label_startRead);
-            clearUp();
-            setButtonStates(true);
-        }
-        void readThread(object oParm)
+		void readThread(object oParm, bool? finalReadback)
         {
+			bool ownsSv6x66OperationCompletion = sv6x66OperationLockActive
+				&& activeOperationPlatform == BKType.SV6X66;
+			try
+			{
             bool isFullRead = true;
             CustomParms parms = null;
             if(oParm != null)
@@ -1103,7 +1264,7 @@ namespace BK7231Flasher
                 parms = oParm as CustomParms;
             }
             clearUp();
-            createFlasher();
+			createFlasher(finalReadback);
             flasher.setBackupName(lastBackupNameEnteredByUser);
             // thanks to wrap-around hack, we can read from start correctly
             int startSector;
@@ -1137,15 +1298,55 @@ namespace BK7231Flasher
                 startSector = 0x0;// getBackupStartSectorForCurrentPlatform();
                 sectors = getBackupSectorCountForCurrentPlatform();
             }
-            flasher.doRead(startSector, sectors, isFullRead);
-            
-            flasher.saveReadResult(startSector);
+			flasher.doRead(startSector, sectors, isFullRead);
+			SV6x66Flasher sv6x66Flasher = flasher as SV6x66Flasher;
+			if (sv6x66Flasher == null || sv6x66Flasher.LastOperationSucceeded)
+			{
+				bool saveSucceeded = flasher.saveReadResult(startSector);
+				if (saveSucceeded && sv6x66Flasher != null)
+					refreshFirmwaresListOnUiThread();
+			}
+			}
+			finally
+			{
+				if (ownsSv6x66OperationCompletion)
+					completeSv6x66Operation();
+			}
 
+			if (ownsSv6x66OperationCompletion)
+				return;
             worker = null;
             //setButtonReadLabel(label_startRead);
             clearUp();
             setButtonStates(true);
         }
+
+		void restoreSv6x66Thread(object state)
+		{
+			bool ownsSv6x66OperationCompletion = sv6x66OperationLockActive
+				&& activeOperationPlatform == BKType.SV6X66;
+			try
+			{
+				Sv6x66RestoreRequest request = state as Sv6x66RestoreRequest;
+				if (request == null)
+					throw new InvalidOperationException("SV6x66 restore request is missing.");
+				clearUp();
+				createFlasher(request.FinalReadbackVerification);
+				SV6x66Flasher sv6x66Flasher = flasher as SV6x66Flasher
+					?? throw new InvalidOperationException("SV6x66 restore worker received the wrong flasher.");
+				sv6x66Flasher.doRestoreFullBackup(request.SourcePath, request.Image, request.Sha256);
+			}
+			catch (Exception exception)
+			{
+				addLog("SV6x66 restore stopped: " + exception.Message + Environment.NewLine, Color.Red);
+			}
+			finally
+			{
+				if (ownsSv6x66OperationCompletion)
+					completeSv6x66Operation();
+			}
+		}
+
         void blankThread(object oParm)
         {
             clearUp();
@@ -1173,11 +1374,11 @@ namespace BK7231Flasher
             }
             if (bBlank)
             {
-                setState("Blank", Color.Green);
+				addLog("Blank" + Environment.NewLine, Color.Green);
             }
             else
             {
-                setState("Not blank", Color.Yellow);
+				addLog("Not blank" + Environment.NewLine, Color.Yellow);
             }
             worker = null;
             //setButtonReadLabel(label_startRead);
@@ -1495,7 +1696,7 @@ namespace BK7231Flasher
             }
             return mac;
         }
-        public int addToFirmaresList(string dir)
+		public int addToFirmaresList(string dir, bool reportErrors = false)
         {
             string[] files;
             try
@@ -1504,6 +1705,9 @@ namespace BK7231Flasher
             }
             catch (Exception ex)
             {
+				if (reportErrors)
+					addLog("Failed to list backup directory " + Path.GetFullPath(dir)
+						+ ": " + ex.Message + Environment.NewLine, Color.Red);
                 return 0;
             }
             for (int i = 0; i < files.Length; i++)
@@ -1521,15 +1725,21 @@ namespace BK7231Flasher
         public void refreshFirmwaresList()
         {
             comboBoxFirmware.Items.Clear();
-            if (Directory.Exists(firmwaresPath) == false)
+            bool firmwareDirectoryExists = Directory.Exists(firmwaresPath);
+            if (!firmwareDirectoryExists && curType != BKType.SV6X66)
             {
                 return;
             }
             int found = 0;
-            found += addToFirmaresList(firmwaresPath);
+            if (firmwareDirectoryExists)
+				found += addToFirmaresList(firmwaresPath);
             if (checkBoxAllowBackup.Checked && checkBoxShowAdvanced.Checked)
             {
-                found += addToFirmaresList(backupsPath);
+				string backupDirectory = curType == BKType.SV6X66
+					? getSv6x66BackupDirectory()
+					: backupsPath;
+				if (Directory.Exists(backupDirectory))
+					found += addToFirmaresList(backupDirectory, curType == BKType.SV6X66);
             }
             labelMatchingFirmwares.Text = "" + found + " total bins, " + comboBoxFirmware.Items.Count + " matching.";
 
@@ -1544,29 +1754,118 @@ namespace BK7231Flasher
                 comboBoxFirmware.Text = "";
                 chosenSourceFile = "";
             }
+			updatePlatformCapabilityButtons(worker == null);
         }
-        public void clearFirmwaresList()
-        {
-            if (Directory.Exists(firmwaresPath) == false)
-            {
-                return;
-            }
-            string[] files;
-            try
-            {
-                files = Directory.GetFiles(firmwaresPath);
-            }
-            catch (Exception ex)
-            {
-                return;
-            }
-            for (int i = 0; i < files.Length; i++)
-            {
-                string fname = files[i];
-                File.Delete(fname);
-            }
-            refreshFirmwaresList();
-        }
+
+		void refreshFirmwaresListOnUiThread()
+		{
+			if (InvokeRequired)
+				Invoke((MethodInvoker)delegate { refreshFirmwaresList(); });
+			else
+				refreshFirmwaresList();
+		}
+
+		string getFirmwareCleanupDirectory()
+		{
+			string directory = Path.GetFullPath(firmwaresPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+			foreach (string backupPath in new[] { Path.GetFullPath(backupsPath), getSv6x66BackupDirectory() })
+			{
+				string backup = backupPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+				if (string.Equals(directory, backup, StringComparison.OrdinalIgnoreCase)
+					|| directory.StartsWith(backup + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+					|| backup.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+					throw new IOException("Firmware and backup directories overlap; cleanup cancelled.");
+				foreach (string path in new[] { directory, backup })
+					for (DirectoryInfo ancestor = new DirectoryInfo(path); ancestor != null; ancestor = ancestor.Parent)
+						if (ancestor.Exists && (ancestor.Attributes & FileAttributes.ReparsePoint) != 0)
+							throw new IOException("Linked firmware or backup directory; cleanup cancelled: " + ancestor.FullName);
+			}
+			return directory;
+		}
+
+		public void clearFirmwaresList()
+		{
+			if (worker != null)
+			{
+				addLog("Firmware cleanup unavailable during an operation." + Environment.NewLine, Color.DarkOrange);
+				return;
+			}
+			string previousSelection = comboBoxFirmware.SelectedItem as string;
+			string previousSource = chosenSourceFile;
+			try
+			{
+				string directory = getFirmwareCleanupDirectory();
+				if (!Directory.Exists(directory))
+				{
+					addLog("No firmware cache files to remove." + Environment.NewLine, Color.Black);
+					return;
+				}
+				var files = new List<FileInfo>();
+				foreach (string path in Directory.GetFiles(directory, "*", SearchOption.TopDirectoryOnly))
+				{
+					var file = new FileInfo(path);
+					string extension = file.Extension;
+					if (!MiscUtils.isCanonicalFileInDirectory(path, directory)
+						|| (file.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0
+						|| file.Name.StartsWith("readResult_", StringComparison.OrdinalIgnoreCase)
+						|| file.Name.IndexOf("backup", StringComparison.OrdinalIgnoreCase) >= 0
+						|| !(extension.Equals(".bin", StringComparison.OrdinalIgnoreCase)
+							|| extension.Equals(".img", StringComparison.OrdinalIgnoreCase)
+							|| extension.Equals(".fls", StringComparison.OrdinalIgnoreCase)))
+						continue;
+					files.Add(file);
+				}
+				files = files.OrderByDescending(file => file.LastWriteTimeUtc)
+					.ThenBy(file => file.Name, StringComparer.Ordinal).ToList();
+				if (files.Count == 0)
+				{
+					addLog("No old firmware cache images to remove." + Environment.NewLine, Color.Black);
+					return;
+				}
+				FileInfo newest = files[0];
+				addLog("Keeping newest firmware cache image by last-modified UTC: " + newest.Name
+					+ " (" + newest.LastWriteTimeUtc.ToString("O") + ")." + Environment.NewLine, Color.Black);
+				for (int index = 1; index < files.Count; index++)
+				{
+					FileInfo file = files[index];
+					try
+					{
+						if (!string.Equals(getFirmwareCleanupDirectory(), directory, StringComparison.OrdinalIgnoreCase)
+							|| !MiscUtils.isCanonicalFileInDirectory(file.FullName, directory)
+							|| !File.Exists(newest.FullName)
+							|| (File.GetAttributes(newest.FullName) & FileAttributes.ReparsePoint) != 0)
+							throw new IOException("Firmware cache changed; cleanup cancelled.");
+						var current = new FileInfo(file.FullName);
+						if ((current.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0
+							|| current.Length != file.Length || current.LastWriteTimeUtc != file.LastWriteTimeUtc)
+							throw new IOException("File changed or is linked; not removed.");
+						File.Delete(file.FullName);
+						addLog("Removed old firmware cache image: " + file.Name + Environment.NewLine, Color.Black);
+					}
+					catch (Exception exception)
+					{
+						addLog("Failed to remove " + file.Name + ": " + exception.Message + Environment.NewLine, Color.Red);
+					}
+				}
+			}
+			catch (Exception exception)
+			{
+				addLog("Firmware cleanup failed: " + exception.Message + Environment.NewLine, Color.Red);
+			}
+			finally
+			{
+				refreshFirmwaresList();
+				if (previousSelection != null)
+					setComboBoxValueByContent(comboBoxFirmware, previousSelection);
+				else if (!string.IsNullOrWhiteSpace(previousSource) && File.Exists(previousSource))
+				{
+					comboBoxFirmware.SelectedIndex = -1;
+					comboBoxFirmware.DropDownStyle = ComboBoxStyle.DropDown;
+					comboBoxFirmware.Text = previousSource;
+					chosenSourceFile = previousSource;
+				}
+			}
+		}
         private void comboBoxChipType_SelectedIndexChanged(object sender, EventArgs e)
         {
             // Changing platform should reset any manually typed / drag-dropped firmware path
@@ -1600,13 +1899,17 @@ namespace BK7231Flasher
                 // kinda hacky, but we are 100% sure that there are no backups in firmwares, so should be ok
                 if (File.Exists(chosenSourceFile) == false)
                 {
-                    chosenSourceFile = Path.Combine(backupsPath, comboBoxFirmware.SelectedItem.ToString());
+					string backupDirectory = curType == BKType.SV6X66
+						? getSv6x66BackupDirectory()
+						: backupsPath;
+					chosenSourceFile = Path.Combine(backupDirectory, comboBoxFirmware.SelectedItem.ToString());
                 }
             }
             else
             {
                 chosenSourceFile = "";
             }
+			updatePlatformCapabilityButtons(worker == null);
         }
 
         private void comboBoxFirmware_Click(object sender, EventArgs e)
@@ -1651,39 +1954,54 @@ namespace BK7231Flasher
 
         private void buttonRead_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             if (doGenericOperationPreparations() == false)
             {
                 return;
             }
+			bool? finalReadback = CaptureFinalReadbackOption();
 			if (curType == BKType.SV6X66)
 			{
 				DialogResult result = MessageBox.Show(
-					"CKW04/SV6x66 full flash read is not passive. It stages the embedded loader by erasing and replacing inactive Bank B, then reads the complete 2 MiB flash. The resulting backup cannot preserve the previous Bank-B contents.\n\nContinue?",
-					"CKW04/SV6x66 staged full read",
+					"Creating an SV6x66 backup will erase and replace the inactive Bank B. Its previous contents cannot be preserved.\n\nDo you want to continue?",
+					"SV6x66 backup warning",
 					MessageBoxButtons.YesNo,
 					MessageBoxIcon.Warning);
 				if (result != DialogResult.Yes)
 				{
 					return;
 				}
+				if (promptForBackupName() == false)
+				{
+					return;
+				}
+				startWorkerThread(state => readThread(state, finalReadback), null);
+				return;
 			}
             if (promptForBackupName() == false)
             {
                 return;
             }
             // setButtonReadLabel(label_stopRead);
-            startWorkerThread(readThread,null);
+			startWorkerThread(state => readThread(state, finalReadback), null);
+			}
         }
         private void buttonBlankCheck_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             if (doGenericOperationPreparations() == false)
             {
                 return;
             }
             startWorkerThread(blankThread, null);
+			}
         }
         private void buttonTestReadWrite_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             if (true)
             {
                 MessageBox.Show("This option is developer-only, it's disabled in release");
@@ -1695,10 +2013,13 @@ namespace BK7231Flasher
             }
             //setButtonReadLabel(label_stopRead);
             startWorkerThread(testReadWrite);
+			}
         }
 
         private void buttonTestWrite_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             if (true)
             {
                 MessageBox.Show("This option is developer-only, it's disabled in release");
@@ -1710,6 +2031,7 @@ namespace BK7231Flasher
             }
             //setButtonReadLabel(label_stopRead);
             startWorkerThread(testWrite);
+			}
         }
         string lastBackupNameEnteredByUser = "unnamedDump.bin";
         bool promptForBackupName()
@@ -1726,6 +2048,8 @@ namespace BK7231Flasher
         }
         private void button4_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             showObkConfigFormIfPossible();
             if (doGenericOperationPreparations() == false)
             {
@@ -1736,17 +2060,26 @@ namespace BK7231Flasher
                 return;
             }
             //setButtonReadLabel(label_stopRead);
-            startWorkerThread(doBackupAndFlashNew);
+			bool? finalReadback = CaptureFinalReadbackOption();
+			startWorkerThread(() => doBackupAndFlashNew(finalReadback));
+			}
         }
 
         private void timer100ms_Tick(object sender, EventArgs e)
         {
             scanForCOMPorts();
+			UpdateFinalReadbackControl();
         }
         void setButtonStates(bool b)
         {
             Singleton.tabControl1.Invoke((MethodInvoker)delegate {
                 // Running on the UI thread
+				setButtonStatesOnUiThread(b);
+			});
+		}
+
+		void setButtonStatesOnUiThread(bool b)
+		{
                 buttonRead.Enabled = b;
                 buttonTestReadWrite.Enabled = b;
                 buttonTestWrite.Enabled = b;
@@ -1761,29 +2094,149 @@ namespace BK7231Flasher
                 groupBoxReadRomTargets.Enabled = b;
                 applySerialControlState(comboBoxReadRomChipType, comboBoxReadRomUART, comboBoxReadRomBaudRate, b, true);
                 updateReadRomReadButtonState();
-            });
-        }
+		}
 
-        void updatePlatformCapabilityButtons(bool operationControlsEnabled)
-        {
+		void tabControl1_Selecting(object sender, TabControlCancelEventArgs e)
+		{
+			if (sv6x66OperationLockActive && e.TabPage != sv6x66OperationLockedTab)
+				e.Cancel = true;
+		}
+
+		void beginSv6x66OperationLock(OperationUiTarget uiTarget, BKType operationPlatform)
+		{
+			if (uiTarget != OperationUiTarget.Flasher || operationPlatform != BKType.SV6X66)
+				return;
+
+			Action applyLock = () =>
+			{
+				sv6x66OperationEnabledStates.Clear();
+				sv6x66OperationSavedAllowDrop = AllowDrop;
+				sv6x66OperationLockedTab = tabControl1.SelectedTab;
+				foreach (Control control in getDescendantControls(this))
+					sv6x66OperationEnabledStates[control] = control.Enabled;
+				AllowDrop = false;
+				sv6x66OperationLockActive = true;
+				applySv6x66OperationLockOnUiThread();
+			};
+
+			if (InvokeRequired)
+				Invoke((MethodInvoker)delegate { applyLock(); });
+			else
+				applyLock();
+		}
+
+		void enforceSv6x66OperationLock()
+		{
+			if (!sv6x66OperationLockActive)
+				return;
+			if (InvokeRequired)
+				Invoke((MethodInvoker)delegate { applySv6x66OperationLockOnUiThread(); });
+			else
+				applySv6x66OperationLockOnUiThread();
+		}
+
+		void applySv6x66OperationLockOnUiThread()
+		{
+			foreach (Control control in sv6x66OperationEnabledStates.Keys)
+			{
+				if (isUserInteractiveControl(control) && control != buttonStop && control != buttonClearLog)
+					control.Enabled = false;
+			}
+			buttonStop.Enabled = true;
+			buttonClearLog.Enabled = true;
+		}
+
+		IEnumerable<Control> getDescendantControls(Control parent)
+		{
+			foreach (Control child in parent.Controls)
+			{
+				yield return child;
+				foreach (Control descendant in getDescendantControls(child))
+					yield return descendant;
+			}
+		}
+
+		bool isUserInteractiveControl(Control control)
+		{
+			return control is ButtonBase
+				|| control is ComboBox
+				|| control is TextBoxBase
+				|| control is ListControl
+				|| control is ListView
+				|| control is TreeView
+				|| control is UpDownBase
+				|| control is DateTimePicker
+				|| control is TrackBar
+				|| control is DataGridView
+				|| control is PropertyGrid
+				|| control is LinkLabel
+				|| control is ToolStrip;
+		}
+
+		void completeSv6x66Operation()
+		{
+			clearUpActiveFlasherSafely();
+			Action restoreUi = () =>
+			{
+				worker = null;
+				setButtonStatesOnUiThread(true);
+				foreach (KeyValuePair<Control, bool> state in sv6x66OperationEnabledStates)
+				{
+					if (!state.Key.IsDisposed)
+						state.Key.Enabled = state.Value;
+				}
+				AllowDrop = sv6x66OperationSavedAllowDrop;
+				sv6x66OperationEnabledStates.Clear();
+				sv6x66OperationLockedTab = null;
+				activeOperationPlatform = BKType.Invalid;
+				sv6x66OperationLockActive = false;
+				updatePlatformCapabilityButtons(true);
+			};
+
+			if (IsDisposed || Disposing)
+			{
+				worker = null;
+				activeOperationPlatform = BKType.Invalid;
+				sv6x66OperationLockActive = false;
+				return;
+			}
+			if (InvokeRequired)
+				Invoke((MethodInvoker)delegate { restoreUi(); });
+			else
+				restoreUi();
+		}
+
+		void clearUpActiveFlasherSafely()
+		{
+			BaseFlasher activeFlasher = flasher;
+			flasher = null;
+			if (activeFlasher == null)
+				return;
+			try { activeFlasher.closePort(); } catch { }
+			try { activeFlasher.Dispose(); } catch { }
+		}
+
+		void updatePlatformCapabilityButtons(bool operationControlsEnabled)
+		{
+			UpdateFinalReadbackControl(operationControlsEnabled);
 			bool sv6x66ReadOnly = curType == BKType.SV6X66;
-            bool obkConfigSupported = IsBeken == false || OBKFlashLayout.hasConfigLocation(curType);
-            bool rfSupported = IsBeken == false || RFPartitionUtil.getRFOffset(curType) >= 0;
+			bool obkConfigSupported = IsBeken == false || OBKFlashLayout.hasConfigLocation(curType);
+			bool rfSupported = IsBeken == false || RFPartitionUtil.getRFOffset(curType) >= 0;
 			buttonTestReadWrite.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonTestWrite.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
-			buttonWriteOnly.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonWriteOnly.Enabled = operationControlsEnabled
+				&& (!sv6x66ReadOnly || isSv6x66RestoreSelectionEligible());
 			buttonDoBackupAndFlashNew.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonCustomOperation.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonEraseAll.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonBlankCheck.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
-			buttonVerify.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonDetect.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonDownloadLatest.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonBrowseFirmware.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonWriteOBKConfig.Enabled = operationControlsEnabled && obkConfigSupported && !sv6x66ReadOnly;
 			buttonReadOBKConfig.Enabled = operationControlsEnabled && obkConfigSupported && !sv6x66ReadOnly;
 			buttonRestoreRF.Enabled = operationControlsEnabled && rfSupported && !sv6x66ReadOnly;
-        }
+		}
         private void buttonStop_Click(object sender, EventArgs e)
         {
             interruptIfRequired();
@@ -1835,6 +2288,8 @@ namespace BK7231Flasher
 
         private void buttonReadRomRead_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             RomReadTarget target = getSelectedReadRomTarget();
             if (target == null)
             {
@@ -1850,6 +2305,7 @@ namespace BK7231Flasher
                 return;
             }
             startWorkerThread(readRomThread, target, OperationUiTarget.ReadRom);
+			}
         }
 
         void readRomThread(object oParm)
@@ -1857,7 +2313,7 @@ namespace BK7231Flasher
             RomReadTarget target = oParm as RomReadTarget;
             if (target == null)
             {
-                setState("No read target selected.", Color.Red);
+				addLog("No read target selected." + Environment.NewLine, Color.Red);
                 worker = null;
                 currentOperationUiTarget = OperationUiTarget.Flasher;
                 setButtonStates(true);
@@ -1867,7 +2323,7 @@ namespace BK7231Flasher
             try
             {
                 string targetKindName = RomReadCatalog.GetKindDisplayName(target.Kind);
-                setState("Reading " + targetKindName + "...", Color.Transparent);
+				addLog("Reading " + targetKindName + "..." + Environment.NewLine, Color.Black);
                 addLog(Environment.NewLine + "Selected read target: " + target.DisplayName + Environment.NewLine, Color.Black);
                 addLog("Platform: " + FlashPlatformCatalog.GetDisplayName(target.Platform) + Environment.NewLine, Color.Black);
                 addLog("Baud rate: " + chosenBaudRate + Environment.NewLine, Color.Black);
@@ -1881,7 +2337,6 @@ namespace BK7231Flasher
                 if (romFlasher == null)
                 {
                     addLog("Selected platform does not implement this read target." + Environment.NewLine, Color.Red);
-                    setState(targetKindName + " read unsupported.", Color.Red);
                     return;
                 }
 
@@ -1889,18 +2344,15 @@ namespace BK7231Flasher
                 if (result == null)
                 {
                     addLog(targetKindName + " read failed or was cancelled." + Environment.NewLine, Color.Red);
-                    setState(targetKindName + " read failed.", Color.Red);
                     return;
                 }
 
                 saveReadRomResult(target, targetKindName, result);
-                setState(targetKindName + " read success!", Color.Green);
             }
             catch (Exception ex)
             {
                 string targetKindName = target == null ? "Selected target" : RomReadCatalog.GetKindDisplayName(target.Kind);
                 addLog(targetKindName + " read error: " + ex.Message + Environment.NewLine, Color.Red);
-                setState(targetKindName + " read failed.", Color.Red);
             }
             finally
             {
@@ -1955,11 +2407,13 @@ namespace BK7231Flasher
             textBoxReadRomLog.Text = "";
         }
 
-        private void checkBoxShowAdvanced_CheckedChanged(object sender, EventArgs e)
-        {
-            refreshAdvancedOptions();
-            setSettingsKeyAndSave("bAdvanced", checkBoxShowAdvanced.Checked); 
-        }
+		private void checkBoxShowAdvanced_CheckedChanged(object sender, EventArgs e)
+		{
+			refreshAdvancedOptions();
+			refreshFirmwaresList();
+			updatePlatformCapabilityButtons(worker == null);
+			setSettingsKeyAndSave("bAdvanced", checkBoxShowAdvanced.Checked);
+		}
         void refreshAdvancedOptions()
         {
             showAdvancedOptions(checkBoxShowAdvanced.Checked);
@@ -1967,6 +2421,7 @@ namespace BK7231Flasher
 
         private void showAdvancedOptions(bool b)
         {
+			checkBoxVerifyBackupWrite.Visible = b;
             buttonTestReadWrite.Visible = b;
             buttonTestWrite.Visible = b;
             buttonEraseAll.Visible = b;
@@ -1997,36 +2452,92 @@ namespace BK7231Flasher
         
         private void buttonOpenBackupsDir_Click(object sender, EventArgs e)
         {
+			string path = curType == BKType.SV6X66
+				? getSv6x66BackupDirectory()
+				: Path.Combine(Directory.GetCurrentDirectory(), backupsPath);
             try
             {
                 // opens the folder in explorer
-                string path = Path.Combine(Directory.GetCurrentDirectory(), backupsPath);
+				Directory.CreateDirectory(path);
                 Process.Start("explorer.exe", path);
             }
             catch(Exception ex)
             {
-                MessageBox.Show("Failed, no firmwares loaded yet!");
+				MessageBox.Show("Failed to open backup directory " + path + ": " + ex.Message,
+					"Backup directory error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         private void buttonClearOldFirmware_Click(object sender, EventArgs e)
         {
-            var res = MessageBox.Show("Do you want to clear all downloaded firmware files? ", "Remove old firmware files", MessageBoxButtons.YesNo);
+			var res = MessageBox.Show("Remove older downloaded firmware files, keeping only the most recently modified one?\n\nBackups will not be removed.", "Remove old firmware files", MessageBoxButtons.YesNo);
             if (res == DialogResult.Yes)
             {
                 clearFirmwaresList();
             }
         }
 
-        private void buttonWriteOnly_Click(object sender, EventArgs e)
-        {
-            showObkConfigFormIfPossible();
+		private void buttonWriteOnly_Click(object sender, EventArgs e)
+		{
+			using (new TerminalFlasherReservation(this))
+			{
+			if (curType == BKType.SV6X66)
+			{
+				if (doGenericOperationPreparations() == false)
+					return;
+				string sourcePath;
+				if (!checkBoxShowAdvanced.Checked || !checkBoxAllowBackup.Checked
+					|| !tryGetSv6x66RestorePath(out sourcePath))
+				{
+					MessageBox.Show(
+						"SV6x66 restore requires Show advanced options, Allow backup restore, and a selected canonical 2 MiB SV6x66 backup.",
+						"SV6x66 restore unavailable",
+						MessageBoxButtons.OK,
+						MessageBoxIcon.Information);
+					updatePlatformCapabilityButtons(worker == null);
+					return;
+				}
+
+				byte[] image;
+				try
+				{
+					image = File.ReadAllBytes(sourcePath);
+					if (image.Length != Sv6x66FullFlashBytes)
+						throw new InvalidDataException($"Selected backup is {image.Length} bytes; exactly {Sv6x66FullFlashBytes} bytes are required.");
+				}
+				catch (Exception exception)
+				{
+					MessageBox.Show("Failed to load SV6x66 backup " + sourcePath + ": " + exception.Message,
+						"SV6x66 backup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+					updatePlatformCapabilityButtons(worker == null);
+					return;
+				}
+
+				Sv6x66RestoreRequest request = new Sv6x66RestoreRequest {
+					SourcePath = sourcePath,
+					Image = image,
+					Sha256 = sha256Hex(image),
+					FinalReadbackVerification = CaptureFinalReadbackOption(),
+				};
+				DialogResult confirmation = MessageBox.Show(
+					"This experimental SV6x66 full-flash restore overwrites the complete 2 MiB flash: the bootloader, both OTA banks, boot selector, calibration, and filesystem. The selected backup's Bank B already contains the loader-staging change. An interruption can leave the device unbootable.\n\nContinue?",
+					"SV6x66 full-flash restore warning",
+					MessageBoxButtons.YesNo,
+					MessageBoxIcon.Warning);
+				if (confirmation != DialogResult.Yes)
+					return;
+				startWorkerThread(restoreSv6x66Thread, request);
+				return;
+			}
+			showObkConfigFormIfPossible();
             if (doGenericOperationPreparations() == false)
             {
                 return;
             }
             //setButtonReadLabel(label_stopRead);
-            startWorkerThread(doOnlyFlashNew, null);
+			bool? finalReadback = CaptureFinalReadbackOption();
+			startWorkerThread(state => doOnlyFlashNew(state, finalReadback), null);
+			}
         }
 
         private void genericLinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
@@ -2037,6 +2548,8 @@ namespace BK7231Flasher
 
         private void buttonEraseAll_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             string _nl = Environment.NewLine;
             string _msg =
                 "BK7231T / BK7231U / BK7252:" + _nl +
@@ -2057,10 +2570,13 @@ namespace BK7231Flasher
                 //setButtonReadLabel(label_stopRead);
                 startWorkerThread(eraseAll);
             }
+			}
         }
 
         private void buttonRestoreRF_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             var res = MessageBox.Show("This will overwrite RF partition with new one with random MAC. " +
                 "This can be used to fix strange issue where your device works in AP but don't want to connect to your WiFi. " +
                 "It can also fix issue where you have 00 00 00 MAC. You must have CORRECT PLATFORM selected first (T or N), because offsets are different.", "WARNING! NUKE RF?", MessageBoxButtons.YesNo);
@@ -2073,13 +2589,15 @@ namespace BK7231Flasher
                 //setButtonReadLabel(label_stopRead);
                 startWorkerThread(restoreRF);
             }
+			}
         }
 
-        private void checkBoxAllowBackup_CheckedChanged(object sender, EventArgs e)
-        {
-            setSettingsKeyAndSave("bAllowBackupRestore", checkBoxAllowBackup.Checked);
-            refreshFirmwaresList();
-        }
+		private void checkBoxAllowBackup_CheckedChanged(object sender, EventArgs e)
+		{
+			setSettingsKeyAndSave("bAllowBackupRestore", checkBoxAllowBackup.Checked);
+			refreshFirmwaresList();
+			updatePlatformCapabilityButtons(worker == null);
+		}
 
         private void linkLabel4_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
@@ -2099,6 +2617,8 @@ namespace BK7231Flasher
         }
         private void buttonWriteOBKConfig_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             showObkConfigFormIfPossible();
             if (doGenericOperationPreparations() == false)
             {
@@ -2106,16 +2626,20 @@ namespace BK7231Flasher
             }
             //setButtonReadLabel(label_stopRead);
             startWorkerThread(doOnlyFlashOBKConfig);
+			}
         }
 
         private void buttonReadOBKConfig_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             if (doGenericOperationPreparations() == false)
             {
                 return;
             }
             //setButtonReadLabel(label_stopRead);
             startWorkerThread(doOnlyReadOBKConfig);
+			}
         }
 
         public class CustomParms
@@ -2126,6 +2650,8 @@ namespace BK7231Flasher
         }
         public void doCustomRead(CustomParms customRead)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             if (doGenericOperationPreparations() == false)
             {
                 return;
@@ -2135,6 +2661,7 @@ namespace BK7231Flasher
                 return;
             }
             startWorkerThread(readThread, customRead);
+			}
         }
         
         void startWorkerThread(Action<object> ts, object customArg)
@@ -2144,11 +2671,17 @@ namespace BK7231Flasher
 
         void startWorkerThread(Action<object> ts, object customArg, OperationUiTarget uiTarget)
         {
+			BKType operationPlatform = curType;
             currentOperationUiTarget = uiTarget;
+			activeOperationPlatform = operationPlatform;
             cts?.Dispose();
             cts = new CancellationTokenSource();
+			beginSv6x66OperationLock(uiTarget, operationPlatform);
             setButtonStates(false);
+			enforceSv6x66OperationLock();
             worker = new Task(ts, customArg, cts.Token);
+			terminalFlasherTasks.RemoveAll(task => task.IsCompleted);
+			terminalFlasherTasks.Add(worker);
             worker.Start();
         }
         void startWorkerThread(Action ts)
@@ -2158,11 +2691,17 @@ namespace BK7231Flasher
 
         void startWorkerThread(Action ts, OperationUiTarget uiTarget)
         {
+			BKType operationPlatform = curType;
             currentOperationUiTarget = uiTarget;
+			activeOperationPlatform = operationPlatform;
             cts?.Dispose();
             cts = new CancellationTokenSource();
+			beginSv6x66OperationLock(uiTarget, operationPlatform);
             setButtonStates(false);
+			enforceSv6x66OperationLock();
             worker = new Task(ts, cts.Token);
+			terminalFlasherTasks.RemoveAll(task => task.IsCompleted);
+			terminalFlasherTasks.Add(worker);
             worker.Start();
         }
         private void buttonStartScan_Click(object sender, EventArgs e)
@@ -2426,6 +2965,8 @@ namespace BK7231Flasher
 
         private void FormMain_FormClosing(object sender, FormClosingEventArgs e)
         {
+			try { cts?.Cancel(); } catch { }
+			try { flasher?.closePort(); } catch { }
             CloseTerminalPort();
             killScanner();
         }
@@ -2547,28 +3088,17 @@ namespace BK7231Flasher
 
         }
 
-        private void buttonVerify_Click(object sender, EventArgs e)
-        {
-            if (doGenericOperationPreparations() == false)
-            {
-                return;
-            }
-            if(curType != BKType.BekenSPI
-                && curType != BKType.GenericSPI)
-            {
-                MessageBox.Show("Not implemented yet.");
-                return;
-            }
-            startWorkerThread(verifyThread, null);
-        }
 
         private void buttonDetect_Click(object sender, EventArgs e)
         {
+			using (new TerminalFlasherReservation(this))
+			{
             if (doGenericOperationPreparations() == false)
             {
                 return;
             }
             startWorkerThread(detectChip);
+			}
         }
 
         private void chkUseCompression_CheckedChanged(object sender, EventArgs e)
