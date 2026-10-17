@@ -62,33 +62,61 @@ namespace BK7231Flasher
 
 		public override bool doErase(int startSector = 0x000, int sectors = 10, bool bAll = false)
 		{
-			if(bAll)
+			bool success = false;
+			try
 			{
-				if(doGenericSetup() == false)
+				if(isCancelled) return false;
+				if(bAll)
 				{
-					return false;
+					if(!doGenericSetup() || !Sync()) return false;
 				}
-				if(Sync())
+
+				if(isCancelled) return false;
+				logger.setState("Erasing...", Color.White);
+				// Chip erase supplies a final ACK, not incremental progress.
+				logger.setProgress(0, 1);
+				if(bAll)
 				{
 					addLogLine("Doing chip erase...");
-					return ExecuteCommand(CMD_FLASH_CHIPERASE, null, 10) != null;
+					success = ExecuteCommand(CMD_FLASH_CHIPERASE, null, 10) != null;
+				}
+				else
+				{
+					var length = sectors * BK7231Flasher.SECTOR_SIZE;
+					var msg = new byte[8];
+					msg[0] = (byte)(startSector & 0xFF);
+					msg[1] = (byte)((startSector >> 8) & 0xFF);
+					msg[2] = (byte)((startSector >> 16) & 0xFF);
+					msg[3] = (byte)((startSector >> 24) & 0xFF);
+					msg[4] = (byte)(length & 0xFF);
+					msg[5] = (byte)((length >> 8) & 0xFF);
+					msg[6] = (byte)((length >> 16) & 0xFF);
+					msg[7] = (byte)((length >> 24) & 0xFF);
+					success = ExecuteCommand(CMD_FLASH_ERASE, msg, 10) != null;
+				}
+				return success && !isCancelled;
+			}
+			finally
+			{
+				if(isCancelled)
+				{
+					logger.setProgress(0, 1);
+					logger.setState("Erase cancelled.", Color.Yellow);
+					addWarningLine("Erase cancelled. The chip may have completed an erase already issued.");
+				}
+				else if(success)
+				{
+					logger.setProgress(1, 1);
+					logger.setState("Erase complete!", Color.DarkGreen);
+					addSuccess("Erase complete!" + Environment.NewLine);
+				}
+				else
+				{
+					logger.setProgress(0, 1);
+					logger.setState("Erase failed!", Color.Red);
+					addErrorLine("Erase failed!");
 				}
 			}
-			else
-			{
-				var length = sectors * BK7231Flasher.SECTOR_SIZE;
-				var msg = new byte[8];
-				msg[0] = (byte)(startSector & 0xFF);
-				msg[1] = (byte)((startSector >> 8) & 0xFF);
-				msg[2] = (byte)((startSector >> 16) & 0xFF);
-				msg[3] = (byte)((startSector >> 24) & 0xFF);
-				msg[4] = (byte)(length & 0xFF);
-				msg[5] = (byte)((length >> 8) & 0xFF);
-				msg[6] = (byte)((length >> 16) & 0xFF);
-				msg[7] = (byte)((length >> 24) & 0xFF);
-				return ExecuteCommand(CMD_FLASH_ERASE, msg, 10) != null;
-			}
-			return false;
 		}
 
 		public override void doRead(int startSector = 0x000, int sectors = 10, bool fullRead = false)
