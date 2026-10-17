@@ -52,8 +52,6 @@ Supported GUI-selectable chip/platform modes:
   - XR809
   - XR872 (XF16)
 
-SV6x66 backup stages the embedded loader by erasing and replacing inactive Bank B. The saved backup is sanitized to remove the staged loader; Bank B contains erased-fill (`0xFF`) rather than its original contents. Guarded restore overwrites the complete 2 MiB flash from a matching full-flash image.
-
 Furthermore, it can automatically create an original firmware backup before flashing, attempt Tuya GPIO/config extraction from backups, and read/write OBK configuration where the selected platform supports it.
 
 Other built-in tools include:
