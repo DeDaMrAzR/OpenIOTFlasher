@@ -32,7 +32,7 @@ Supported GUI-selectable chip/platform modes:
   - GD32VW553
 - Generic SPI CH341
 - iComm Semi:
-  - SV6x66 (guarded backup and full-image restore for the tested 2 MiB profile)
+  - SV6x66 (backup and guarded full-image restore)
 - Lightning Semi:
   - LN882H
   - LN8825
@@ -52,7 +52,7 @@ Supported GUI-selectable chip/platform modes:
   - XR809
   - XR872 (XF16)
 
-SV6x66 support is limited to the tested stock `FWSWES-SV04MATE-3.7.1` profile with JEDEC `C8 40 15` and 2 MiB flash. Backup stages the embedded loader by erasing and replacing inactive Bank B, so it is not a pristine pre-staging Bank-B backup. Guarded restore overwrites the complete flash from a matching 2 MiB image; support is not established for other SV6x66 device profiles.
+SV6x66 backup stages the embedded loader by erasing and replacing inactive Bank B, so it is not a pristine pre-staging Bank-B backup. Guarded restore overwrites the complete 2 MiB flash from a matching full-flash image.
 
 Furthermore, it can automatically create an original firmware backup before flashing, attempt Tuya GPIO/config extraction from backups, and read/write OBK configuration where the selected platform supports it.
 
