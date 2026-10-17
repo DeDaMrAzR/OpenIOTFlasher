@@ -24,12 +24,13 @@
 | LN8825 | Lightning Semi | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | RDA5981 | RDA Micro | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ℹ️ |
 | OPL1000A2 | Opulinks | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ➖ | ✅ |
+| SV6x66 | iComm Semi | ⚠️⁸ | ⚠️⁸ | ➖ | ➖ | ❌ | ❌ | ➖ | ➖ | ❌ |
 | RTL8710B (AmebaZ) | Realtek | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | RTL8720DN (AmebaD) | Realtek | ✅ | ✅ | ➖ | 🟰 | ✅ | ✅ | ➖ | ➖ | ✅ |
 | RTL87X0C (AmebaZ2) | Realtek | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | RTL8721DA (AmebaDp) | Realtek | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | RTL8720E (AmebaLite) | Realtek | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
-| W600 (write only) | WinnerMicro | ❌⁵ | ✅⁵ | ➖ | ➖ | ✅ | ⚠️⁵ | ➖ | ➖ | ❌ |
+| W600 | WinnerMicro | ✅⁵ | ✅ | ➖ | ➖ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | W80x | WinnerMicro | ✅ | ✅ | ➖ | ➖ | ✅ | ✅ | ➖ | ➖ | ℹ️ |
 | XR806 | XRadio | ✅ | ✅ | ➖ | ➖ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | XR809 | XRadio | ✅ | ✅ | ➖ | ➖ | ✅ | ✅ | ➖ | ➖ | ✅ |
@@ -49,6 +50,7 @@ R cmp / W cmp - Read/write compression via custom flasher stub; ➖ means not ap
 ² OBK config location is not defined for this platform<br>
 ³ Always writes from `0x0`<br>
 ⁴ Custom reads work, but custom writes still follow the image/partition flow instead of arbitrary raw offsets.<br>
-⁵ Write-only; standalone OBK config writes are disabled and config injection only happens during a full firmware write.<br>
+⁵ W600 support is validated on 1 MiB devices. 2 MiB devices have not been tested.<br>
 ⁶ OBK config reads work, but standalone OBK config writes are not implemented.<br>
 ⁷ RF partition restore and relocation are not defined for this platform.<br>
+⁸ SV6x66 backup stages the embedded loader by erasing and replacing inactive Bank B.<br>

@@ -16,6 +16,11 @@ namespace BK7231Flasher
                 Console.Write(s);
         }
 
+        public void setLogProgress(string s, Color c)
+        {
+            Console.Write("\r" + s);
+        }
+
         private System.Diagnostics.Stopwatch progressStopwatch;
         private int lastProgressMax = -1;
 

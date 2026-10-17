@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -17,10 +18,94 @@ namespace BK7231Flasher
             public int SortOrder { get; set; }
         }
 
+        sealed class ScannerListViewComparer : IComparer
+        {
+            readonly int column;
+            readonly SortOrder sortOrder;
+
+            public ScannerListViewComparer(int column, SortOrder sortOrder)
+            {
+                this.column = column;
+                this.sortOrder = sortOrder;
+            }
+
+            public int Compare(object x, object y)
+            {
+                ListViewItem left = x as ListViewItem;
+                ListViewItem right = y as ListViewItem;
+                int result;
+
+                if (column == 0)
+                {
+                    result = compareNumbers(getColumnText(left, column), getColumnText(right, column));
+                }
+                else if (column == 1)
+                {
+                    result = compareIPAddresses(getColumnText(left, column), getColumnText(right, column));
+                }
+                else
+                {
+                    result = StringComparer.CurrentCultureIgnoreCase.Compare(
+                        getColumnText(left, column), getColumnText(right, column));
+                }
+
+                return sortOrder == SortOrder.Descending ? -result : result;
+            }
+
+            static string getColumnText(ListViewItem item, int columnIndex)
+            {
+                if (item == null || item.SubItems.Count <= columnIndex)
+                {
+                    return "";
+                }
+                return item.SubItems[columnIndex].Text;
+            }
+
+            static int compareNumbers(string left, string right)
+            {
+                long leftValue;
+                long rightValue;
+                if (long.TryParse(left, out leftValue) && long.TryParse(right, out rightValue))
+                {
+                    return leftValue.CompareTo(rightValue);
+                }
+                return StringComparer.CurrentCultureIgnoreCase.Compare(left, right);
+            }
+
+            static int compareIPAddresses(string left, string right)
+            {
+                IPAddress leftAddress;
+                IPAddress rightAddress;
+                if (IPAddress.TryParse(left, out leftAddress)
+                    && IPAddress.TryParse(right, out rightAddress))
+                {
+                    byte[] leftBytes = leftAddress.GetAddressBytes();
+                    byte[] rightBytes = rightAddress.GetAddressBytes();
+                    int lengthResult = leftBytes.Length.CompareTo(rightBytes.Length);
+                    if (lengthResult != 0)
+                    {
+                        return lengthResult;
+                    }
+                    for (int i = 0; i < leftBytes.Length; i++)
+                    {
+                        int byteResult = leftBytes[i].CompareTo(rightBytes[i]);
+                        if (byteResult != 0)
+                        {
+                            return byteResult;
+                        }
+                    }
+                    return 0;
+                }
+                return StringComparer.CurrentCultureIgnoreCase.Compare(left, right);
+            }
+        }
+
         OBKScanner scan;
         List<OBKDeviceAPI> founds = new List<OBKDeviceAPI>();
         ContextMenuStrip scannerDeviceMenu;
         ContextMenuStrip scannerSubnetMenu;
+        int scannerSortColumn = -1;
+        SortOrder scannerSortOrder = SortOrder.Ascending;
 
         private void killScanner()
         {
@@ -132,11 +217,25 @@ namespace BK7231Flasher
 
         private void updateItem(OBKDeviceAPI exi)
         {
-            while(listView1.Items.Count <= exi.getUserIndex())
+            ListViewItem item = null;
+            foreach (ListViewItem candidate in listView1.Items)
             {
-                listView1.Items.Add(new ListViewItem());
+                if (ReferenceEquals(candidate.Tag, exi))
+                {
+                    item = candidate;
+                    break;
+                }
             }
-            updateItem(exi, listView1.Items[exi.getUserIndex()]);
+            if (item == null)
+            {
+                item = new ListViewItem();
+                listView1.Items.Add(item);
+            }
+            updateItem(exi, item);
+            if (listView1.ListViewItemSorter != null)
+            {
+                listView1.Sort();
+            }
             resizeScannerBuildColumn();
         }
 
@@ -167,6 +266,23 @@ namespace BK7231Flasher
         private void listView1_Resize(object sender, EventArgs e)
         {
             resizeScannerBuildColumn();
+        }
+        private void listView1_ColumnClick(object sender, ColumnClickEventArgs e)
+        {
+            if (scannerSortColumn == e.Column)
+            {
+                scannerSortOrder = scannerSortOrder == SortOrder.Ascending
+                    ? SortOrder.Descending : SortOrder.Ascending;
+            }
+            else
+            {
+                scannerSortColumn = e.Column;
+                scannerSortOrder = SortOrder.Ascending;
+            }
+
+            listView1.ListViewItemSorter = new ScannerListViewComparer(
+                scannerSortColumn, scannerSortOrder);
+            listView1.Sort();
         }
         private void resizeScannerBuildColumn()
         {

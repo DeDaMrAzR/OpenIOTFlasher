@@ -7,8 +7,8 @@
     <ProjectGuid>{39F45A2F-E298-4073-8E84-A95924A43363}</ProjectGuid>
     <OutputType>WinExe</OutputType>
     <RootNamespace>BK7231Flasher</RootNamespace>
-    <AssemblyName>BK7231Flasher</AssemblyName>
-    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <AssemblyName>OpenIOT_flasher</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
     <TargetFrameworkProfile />
@@ -80,6 +80,7 @@
     <Compile Include="Flashers\W800Flasher.cs" />
     <Compile Include="Flashers\ECR6600Flasher.cs" />
     <Compile Include="Flashers\BaseFlasher.cs" />
+	<Compile Include="Flashers\SV6x66Flasher.cs" />
     <Compile Include="Flashers\FlasherFactory.cs" />
     <Compile Include="Flashers\IRomReadFlasher.cs" />
     <Compile Include="Flashers\BKChipIdentity.cs" />
@@ -112,6 +113,10 @@
       <DependentUpon>FormExtractedConfig.cs</DependentUpon>
     </Compile>
     <Compile Include="FormMain.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMain.Terminal.cs">
+      <DependentUpon>FormMain.cs</DependentUpon>
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="FormMain.Designer.cs">
@@ -222,6 +227,10 @@
     <EmbeddedResource Include="Floaders\TR6260_Partition.bin" />
     <EmbeddedResource Include="Floaders\BL702Floader_32m.bin" />
     <EmbeddedResource Include="Floaders\W800_Stub.bin" />
+    <EmbeddedResource Include="Floaders\W600_Stub.bin" />
+    <EmbeddedResource Include="Floaders\W600_Secboot_1M_V3_3.bin" />
+    <EmbeddedResource Include="Floaders\W600_Secboot_1M_V3_9.bin" />
+    <EmbeddedResource Include="Floaders\W600_Secboot_1M_V3_13.bin" />
     <EmbeddedResource Include="Floaders\XR809_Stub.bin" />
     <EmbeddedResource Include="Floaders\ESP32_Stub.json" />
     <EmbeddedResource Include="Floaders\ESP32S2_Stub.json" />
@@ -238,6 +247,7 @@
     <EmbeddedResource Include="Floaders\RTL8721DA_Stub.bin" />
     <EmbeddedResource Include="Floaders\RTL8720E_Stub.bin" />
     <EmbeddedResource Include="Floaders\RDA5981_Stub.bin" />
+	  <EmbeddedResource Include="Floaders\SV6x66_BankB_Carrier.bin" />
     <EmbeddedResource Include="Floaders\RTL8710B_Stub.bin" />
     <EmbeddedResource Include="Floaders\OPL1000A2_Stub.bin" />
     <EmbeddedResource Include="Floaders\OPL1000A2_Stub_stage1.bin" />

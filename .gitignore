@@ -9,3 +9,7 @@ packages
 BuildVersion.cs
 backups/
 references/
+/TEST/
+/DEV UI/
+/.agents/
+/AGENTS.md

@@ -1,9 +1,11 @@
-name: Build and Release BK7231GUIFlashTool
+name: Build and Release OpenIOTFlasher
 
 on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   pull_request:
     branches:
       - main
@@ -12,89 +14,85 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    env:
-      FLASHERVERSION: ${{ github.run_number }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Set OpenIOTFlasher version
+        shell: pwsh
+        run: |
+          $version = "1.0.0"
+          if ("${{ github.ref_type }}" -eq "tag") {
+            if ("${{ github.ref_name }}" -notmatch '^v\d+\.\d+\.\d+$') {
+              throw "Release tags must use semantic version format vMAJOR.MINOR.PATCH."
+            }
+            $version = "${{ github.ref_name }}" -replace '^v', ''
+          }
+          "FLASHERVERSION=$version" >> $env:GITHUB_ENV
 
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v3
 
-      - name: Create Output Directory
+      - name: Create output directory
         run: mkdir -p BuildOutput/Release
 
-      - name: Build the project
-        run: msbuild BK7231Flasher/BK7231Flasher.csproj /p:Configuration=Release /p:OutDir=BuildOutput\Release\
+      - name: Build OpenIOTFlasher
+        shell: pwsh
+        run: msbuild BK7231Flasher/BK7231Flasher.csproj /p:Configuration=Release /p:OutDir=BuildOutput\Release\ /p:FLASHERVERSION=$env:FLASHERVERSION
 
-      - name: Debug Build Output
+      - name: Set OpenIOTFlasher executable name
+        shell: pwsh
         run: |
-          echo "Checking output directory..."
-          dir BuildOutput
-          dir BuildOutput\Release
+          $outputDirectory = "BK7231Flasher/BuildOutput/Release"
+          $sourceExecutable = Join-Path $outputDirectory "OpenIOT_flasher.exe"
+          $releaseExecutable = Join-Path $outputDirectory "OpenIOTFlasher.exe"
+          $sourceConfiguration = Join-Path $outputDirectory "OpenIOT_flasher.exe.config"
+          $releaseConfiguration = Join-Path $outputDirectory "OpenIOTFlasher.exe.config"
+          if (-not (Test-Path -LiteralPath $sourceExecutable)) {
+            throw "Expected build output was not found: $sourceExecutable"
+          }
+          if (-not (Test-Path -LiteralPath $sourceConfiguration)) {
+            throw "Expected executable configuration was not found: $sourceConfiguration"
+          }
+          Move-Item -LiteralPath $sourceExecutable -Destination $releaseExecutable
+          Move-Item -LiteralPath $sourceConfiguration -Destination $releaseConfiguration
 
-      - name: Upload Build Artifacts
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: BK7231GUIFlashTool
+          name: OpenIOTFlasher
           path: |
             BK7231Flasher/BuildOutput/Release/*.exe
+            BK7231Flasher/BuildOutput/Release/*.exe.config
             BK7231Flasher/BuildOutput/Release/*.dll
-          if-no-files-found: warn
-
-      - name: Debug Build Output Directory
-        run: |
-          echo "Contents of BuildOutput/Release:"
-          dir BK7231Flasher/BuildOutput/Release
+          if-no-files-found: error
 
   release:
     needs: build
     runs-on: windows-latest
-    if: github.ref == 'refs/heads/main'
+    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Download Build Artifacts
+      - name: Download build artifacts
         uses: actions/download-artifact@v7
         with:
-          name: BK7231GUIFlashTool
+          name: OpenIOTFlasher
+          path: BuildOutput/Release
 
-      - name: Recreate Directory Structure
+      - name: Package OpenIOTFlasher
+        shell: pwsh
         run: |
-          echo "Recreating BuildOutput directory..."
-          mkdir -p BuildOutput/Release
-          move *.exe BuildOutput/Release/
-          move *.dll BuildOutput/Release/
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+          Compress-Archive -Path "BuildOutput/Release/*" -DestinationPath "release/OpenIOTFlasher-${{ github.ref_name }}.zip"
 
-      #- name: Copy loaders directory into release
-      #  run: |
-      #    echo "Copying /loaders/ into BuildOutput/Release..."
-      #    xcopy loaders BuildOutput\Release\loaders /E /I /Y
-
-      - name: Debug Downloaded Artifacts
-        run: |
-          echo "Downloaded artifacts in BuildOutput/Release:"
-          dir BuildOutput/Release
-          #echo "Contents of loaders:"
-          #dir BuildOutput/Release/loaders
-
-      - name: Create ZIP File
-        run: |
-          mkdir release
-          powershell Compress-Archive -Path "BuildOutput/Release/*" -DestinationPath "release/BK7231GUIFlashTool-build-${{ github.run_number }}.zip"
-
-      - name: Create GitHub Release
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ github.run_number }}
-          name: BK7231GUIFlashTool build ${{ github.run_number }}
+          name: OpenIOTFlasher ${{ github.ref_name }}
           body: |
-            Automated release for BK7231GUIFlashTool.
-            Includes the latest .exe, .dll files, and loaders directory.
+            OpenIOTFlasher ${{ github.ref_name }}.
           generate_release_notes: true
           draft: false
           prerelease: false
-          files: release/BK7231GUIFlashTool-build-${{ github.run_number }}.zip
+          files: release/OpenIOTFlasher-${{ github.ref_name }}.zip

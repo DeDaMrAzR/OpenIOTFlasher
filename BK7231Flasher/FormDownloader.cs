@@ -89,7 +89,7 @@ namespace BK7231Flasher
             webClient.DownloadFileCompleted += (s, e) =>
             {
             };
-            webClient.Headers.Add("user-agent", "BK7231GUIFlashTool");
+            webClient.Headers.Add("user-agent", "OpenIOT_flasher");
             webClient.Headers.Add("Accept", "application/vnd.github+json");
 
             addLog("Will request GitHub API: " + release_api_url);

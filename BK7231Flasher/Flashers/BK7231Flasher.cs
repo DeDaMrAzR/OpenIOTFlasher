@@ -43,6 +43,8 @@ namespace BK7231Flasher
         const int FLASH_MID_RETRY_DELAY_MS = 200;
         const int ERASE_ATTEMPTS = 5;
         const float FLASH_COMMAND_MIN_TIMEOUT = 0.5f;
+        const int UART_COMMAND_READ_TIMEOUT_MS = 50;
+        const float UART_COMMAND_TIMEOUT_MULTIPLIER = 5.0f;
         const int SET_BAUD_DRAIN_TIMEOUT_MS = 1000;
         const int BEKEN_EFUSE_SIZE = 0x20;
         const int FOUR_BYTE_BEKEN_EFUSE_SIZE = 0x04;
@@ -95,7 +97,7 @@ namespace BK7231Flasher
             }
             catch (Exception ex)
             {
-                addError("Serial port create exception: " + ex.ToString() + Environment.NewLine);
+                ReportSerialPortOpenFailure(ex);
                 return true;
             }
             try
@@ -113,7 +115,7 @@ namespace BK7231Flasher
             }
             catch(Exception ex)
             {
-                addError("Serial port open exception: " + ex.ToString() + Environment.NewLine);
+                ReportSerialPortOpenFailure(ex);
                 return true;
             }
             return false;
@@ -584,77 +586,46 @@ namespace BK7231Flasher
 
         byte[] Start_Cmd(byte[] txbuf, int rxLen = 0, float timeout = 0.05f, byte? expectedResponseCommand = null)
         {
-            if (txbuf != null)
+            try
             {
-                consumePending();
-            }
-            serial.ReadTimeout = (int)(10*cfg_readTimeOutMultForSerialClass);
-            if(txbuf != null)
-            {
-                serial.Write(txbuf, 0, txbuf.Length);
-            }
-            if (rxLen == 0)
-                return null;
-            var timer = new Stopwatch();
-            timer.Start();
-            if (rxLen > 0)
-            {
+                if (txbuf != null)
+                {
+                    consumePending();
+                }
+                serial.ReadTimeout = UART_COMMAND_READ_TIMEOUT_MS;
+                if(txbuf != null)
+                {
+                    serial.Write(txbuf, 0, txbuf.Length);
+                }
+                if (rxLen == 0)
+                    return null;
+                var timer = new Stopwatch();
+                timer.Start();
                 List<byte> received = new List<byte>(rxLen);
                 byte[] readBuffer = new byte[Math.Min(Math.Max(rxLen, 256), 4096)];
-                while (timer.Elapsed.TotalSeconds < timeout * cfg_readTimeOutMultForLoop)
+                while (timer.Elapsed.TotalSeconds < timeout * UART_COMMAND_TIMEOUT_MULTIPLIER)
                 {
                     try
                     {
-                        if (cfg_readReplyStyle == 0)
+                        int available = serial.BytesToRead;
+                        if (available > 0)
                         {
-                            //addLog("serial.BytesToRead " + serial.BytesToRead+"");
-                            int available = serial.BytesToRead;
-                            if (available > 0 && (received.Count > 0 || available >= rxLen))
+                            int readNow = serial.Read(readBuffer, 0, Math.Min(readBuffer.Length, available));
+                            for (int i = 0; i < readNow; i++)
                             {
-                                //  addLog("Tries to read!");
-                                int readNow = serial.Read(readBuffer, 0, Math.Min(readBuffer.Length, available));
-                                for (int i = 0; i < readNow; i++)
-                                {
-                                    received.Add(readBuffer[i]);
-                                }
-                                if (bDebugUART)
-                                {
-                                    addLog("Read len: " + received.Count + Environment.NewLine);
-                                }
-                                if (tryExtractResponse(received, rxLen, txbuf, expectedResponseCommand, out byte[] response))
-                                {
-                                    if (bDebugUART)
-                                    {
-                                        addLog("Got UART reply!" + Environment.NewLine);
-                                    }
-                                    return response;
-                                }
+                                received.Add(readBuffer[i]);
                             }
-                        }
-                        else
-                        {
-                            //addLog("serial.BytesToRead " + serial.BytesToRead+"");
-                            int ava = serial.BytesToRead;
-                            if (ava > 0)
+                            if (bDebugUART)
                             {
-                                //  addLog("Tries to read!");
-                                int readNow = serial.Read(readBuffer, 0, Math.Min(readBuffer.Length, ava));
-                                for (int i = 0; i < readNow; i++)
-                                {
-                                    received.Add(readBuffer[i]);
-                                }
+                                addLog("Read len: " + received.Count + Environment.NewLine);
+                            }
+                            if (tryExtractResponse(received, rxLen, txbuf, expectedResponseCommand, out byte[] response))
+                            {
                                 if (bDebugUART)
                                 {
-                                    addLog("Read len: " + received.Count + Environment.NewLine);
+                                    addLog("Got UART reply!" + Environment.NewLine);
                                 }
-                                if (tryExtractResponse(received, rxLen, txbuf, expectedResponseCommand, out byte[] response))
-                                {
-                                    if (bDebugUART)
-                                    {
-                                        addLog("Got UART reply!" + Environment.NewLine);
-                                    }
-                                    return response;
-                                }
+                                return response;
                             }
                         }
                     }
@@ -664,7 +635,11 @@ namespace BK7231Flasher
                     }
                     catch (Exception ex)
                     {
-                        addLog("Got exception: " + ex.ToString() + "!" + Environment.NewLine);
+                        if (IsSerialConnectionLostException(ex))
+                        {
+                            throw;
+                        }
+                        LogOperationException("Serial command failed: ", ex);
                         return null;
                     }
                 }
@@ -674,7 +649,15 @@ namespace BK7231Flasher
                 }
                 return null;
             }
-            return null;
+            catch (Exception ex)
+            {
+                if (IsSerialConnectionLostException(ex))
+                {
+                    throw;
+                }
+                LogOperationException("Serial command failed: ", ex);
+                return null;
+            }
         }
         static bool ByteArrayCompare(byte[] a1, byte[] a2, int len)
         {
@@ -1001,8 +984,7 @@ namespace BK7231Flasher
             }
             observedLinkStage = stage;
             string stageName = stage == BekenLinkStage.BootRom ? "BootROM" : "BL2";
-            addLog("Link-stage probe command 0x" + requestCommand.ToString("X2")
-                + " returned 0x" + response[6].ToString("X2") + "." + Environment.NewLine);
+            addLog(Environment.NewLine);
             addSuccess("Detected link stage: " + stageName + Environment.NewLine);
             if (stage == BekenLinkStage.Bl2)
             {
@@ -1041,42 +1023,57 @@ namespace BK7231Flasher
 
         bool getBus()
         {
-            int maxTries = 100;
-            int loops = 100;
-            bool bOk = false;
+            const int linkChecksPerAttempt = 100;
+            int attempt = 0;
             observedLinkStage = BekenLinkStage.Unknown;
-            addLog("Getting bus... (now, please do reboot by CEN or by power off/on)" + Environment.NewLine);
-            serial.BaudRate = 115200;
-            for (int tr = 0; tr < maxTries && !bOk; tr++)
+            while (cancellationToken.IsCancellationRequested == false)
             {
-                serial.DtrEnable = true;
-                serial.RtsEnable = true;
-                Thread.Sleep(50);
-                serial.DtrEnable = false;
-                serial.RtsEnable = false;
-                if(tr % 5 == 0)
+                attempt++;
+                string busProgress = "Getting bus... attempt " + attempt
+                    + ". Reboot by power cycle or briefly short CEN to ground.";
+                logger.setLogProgress(busProgress, Color.Orange);
+                try
                 {
-                    serial.WriteLine("reboot");
-                }
-                for (int l = 0; l < loops && !bOk; l++)
-                {
-                    bOk = linkCheck();
-                    if (bOk)
+                    serial.BaudRate = 115200;
+                    serial.DtrEnable = true;
+                    serial.RtsEnable = true;
+                    Thread.Sleep(50);
+                    serial.DtrEnable = false;
+                    serial.RtsEnable = false;
+                    if((attempt - 1) % 5 == 0)
                     {
-                        addSuccess("Getting bus success!" + Environment.NewLine);
-                        return true;
+                        serial.WriteLine("reboot");
                     }
-                    if ((l % 8) == 7)
+                    for (int l = 0; l < linkChecksPerAttempt && cancellationToken.IsCancellationRequested == false; l++)
                     {
-                        probeBl2LinkStage();
+                        if (linkCheck())
+                        {
+                            logger.setLogProgress("Getting bus... connected." + Environment.NewLine, Color.Green);
+                            return true;
+                        }
+                        if ((l % 8) == 7)
+                        {
+                            probeBl2LinkStage();
+                        }
                     }
                 }
-                addWarning("Getting bus failed, will try again - " + tr + "/" + maxTries + "!" + Environment.NewLine);
-                if(tr % 10 == 9)
+                catch (Exception ex)
                 {
-                    addWarning("Reminder: you should do a device reboot now (do power off/on of the device, but don't disconnect UART or do a CEN short to ground for 0.25sec)" + Environment.NewLine);
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        logger.setLogProgress("Getting bus... cancelled." + Environment.NewLine, Color.Orange);
+                        return false;
+                    }
+                    if (HandleSerialConnectionLost(ex))
+                    {
+                        return false;
+                    }
+                    logger.setLogProgress("Getting bus... failed." + Environment.NewLine, Color.Red);
+                    LogOperationException("Getting bus failed: ", ex);
+                    return false;
                 }
             }
+            logger.setLogProgress("Getting bus... cancelled." + Environment.NewLine, Color.Orange);
             if (usesDirectFlashAccessProfile() && observedLinkStage == BekenLinkStage.Unknown)
             {
                 addWarning("No valid BootROM or BL2 link-stage response was observed." + Environment.NewLine);
@@ -1092,7 +1089,7 @@ namespace BK7231Flasher
             }
             catch (Exception ex)
             {
-                addError("Exception caught: " + ex.ToString() + Environment.NewLine);
+                LogOperationException("Operation failed: ", ex);
             }
             finally
             {
@@ -1128,6 +1125,35 @@ namespace BK7231Flasher
         public override void doTestReadWrite(int startSector = 0x000, int sectors = 10)
         {
             runModificationOperation(() => doTestReadWriteInternal(startSector, sectors));
+        }
+
+        public override void doDetect()
+        {
+            LastOperationSucceeded = false;
+            try
+            {
+                addLog(Environment.NewLine + "Starting chip detection!" + Environment.NewLine);
+                LastOperationSucceeded = doGenericSetup(false);
+                if (LastOperationSucceeded)
+                {
+                    addSuccess("Chip detection completed." + Environment.NewLine);
+                    logger.setState("Chip detected.", Color.Green);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogOperationException("Chip detection failed: ", ex);
+            }
+            finally
+            {
+                try
+                {
+                    closePort();
+                }
+                catch
+                {
+                }
+            }
         }
         
         public override void doReadAndWrite(int startSector, int sectors, string sourceFileName, WriteMode rwMode)
@@ -1175,7 +1201,7 @@ namespace BK7231Flasher
             }
             catch(Exception ex)
             {
-                addError("Exception caught: " + ex.ToString() + Environment.NewLine);
+                LogOperationException("Read failed: ", ex);
             }
         }
         public override byte[]getReadResult()
@@ -1188,6 +1214,10 @@ namespace BK7231Flasher
         {
             if(ms == null)
             {
+                if (HasSerialConnectionBeenLost || HasSerialPortOpenFailed || cancellationToken.IsCancellationRequested)
+                {
+                    return false;
+                }
                 addError("There was no result to save."+Environment.NewLine);
                 return false;
             }
@@ -1227,6 +1257,10 @@ namespace BK7231Flasher
             logger.setState("Getting bus...", Color.Transparent);
             if (getBus() == false)
             {
+                if (cancellationToken.IsCancellationRequested || HasSerialConnectionBeenLost)
+                {
+                    return false;
+                }
                 addError("Failed to get bus!" + Environment.NewLine);
                 logger.setState("Failed to get bus!", Color.Red);
                 return false;
@@ -1276,8 +1310,6 @@ namespace BK7231Flasher
             addLog("Going to open port: " + serialName + "." + Environment.NewLine);
             if (openPort())
             {
-                logger.setState("Open serial failed!", Color.Red);
-                addError("Failed to open serial port!" + Environment.NewLine);
                 return false;
             }
             addSuccess("Serial port open!" + Environment.NewLine);
@@ -1422,18 +1454,14 @@ namespace BK7231Flasher
                 addError("Failed to read device MID!" + Environment.NewLine);
                 return false;
             }
-            addSuccess("Flash MID loaded: " + deviceMID.ToString("X6") + Environment.NewLine);
-            addLog("Searching for the flash definition..." + Environment.NewLine);
             flashInfo = BKFlashList.Singleton.findFlashForMID(deviceMID);
             if(flashInfo == null)
             {
                 addError("Failed to find flash definition for device MID " + deviceMID.ToString("X6") + "." + Environment.NewLine);
                 return false;
             }
-            addSuccess("Flash definition found for " + deviceMID.ToString("X6") + "." + Environment.NewLine);
-            addLog("Flash information: " + flashInfo.ToString() + Environment.NewLine);
             setFlashSize(flashInfo.szMem);
-            addLog("Flash size is " + formatFlashSize(FLASH_SIZE) + "." + Environment.NewLine);
+            addSuccess(FormatFlashInfo(deviceMID, flashInfo.manufacturer, flashInfo.szMem) + Environment.NewLine);
             return true;
         }
 
@@ -1625,18 +1653,22 @@ namespace BK7231Flasher
                 for (int sec = 0; sec < sectors; sec++)
                 {
                     int secAddr = startSector + SECTOR_SIZE * sec;
+                    string writeProgress = "Writing " + formatHex(secAddr) + "...";
+                    logger.setLogProgress(writeProgress, Color.Black);
                     bool bOk = usesDirectFlashAccessProfile()
                         ? writePageWithCRCVerification(secAddr, data, SECTOR_SIZE * sec)
                         : writeSector4K(secAddr, data, SECTOR_SIZE * sec);
-                    addLog(formatHex(secAddr) + "...");
                     if (bOk == false)
                     {
                         logger.setState("Writing error!", Color.Red);
-                        addError(" Writing sector " + formatHex(secAddr) + " failed!" + Environment.NewLine);
+                        logger.setLogProgress(writeProgress + " Failed!", Color.Red);
+                        addError(Environment.NewLine + "Writing sector " + formatHex(secAddr) + " failed!" + Environment.NewLine);
                         return false;
                     }
+                    logger.setLogProgress(writeProgress + " Ok!", Color.Green);
                     logger.setProgress(sec + 1, sectors);
                 }
+                addLog(Environment.NewLine);
                 if (usesDirectFlashAccessProfile())
                 {
                     addSuccess("All written pages passed independent CRC verification." + Environment.NewLine);
@@ -1647,7 +1679,6 @@ namespace BK7231Flasher
                     return false;
                 }
             }
-            addLog(Environment.NewLine);
             if (cfg != null)
             {
                 addLog("Now will also write OBK config..." + Environment.NewLine);
@@ -1765,18 +1796,22 @@ namespace BK7231Flasher
             for (int sec = 0; sec < sectors; sec++)
             {
                 int secAddr = startSector + SECTOR_SIZE * sec;
+                string writeProgress = "Writing " + formatHex(secAddr) + "...";
+                logger.setLogProgress(writeProgress, Color.Black);
                 bool bOk = usesDirectFlashAccessProfile()
                     ? writePageWithCRCVerification(secAddr, data, SECTOR_SIZE * sec)
                     : writeSector4K(secAddr, data, SECTOR_SIZE * sec);
-                addLog(formatHex(secAddr) + "...");
                 if (bOk == false)
                 {
                     logger.setState("Write sector failed!", Color.Red);
-                    addError(" Writing sector " + formatHex(secAddr) + " failed!" + Environment.NewLine);
+                    logger.setLogProgress(writeProgress + " Failed!", Color.Red);
+                    addError(Environment.NewLine + "Writing sector " + formatHex(secAddr) + " failed!" + Environment.NewLine);
                     return false;
                 }
+                logger.setLogProgress(writeProgress + " Ok!", Color.Green);
                 logger.setProgress(sec + 1, sectors);
             }
+            addLog(Environment.NewLine);
             if (usesDirectFlashAccessProfile() == false && checkCRC(startSector, sectors, data) == false)
             {
                 return false;
@@ -2437,9 +2472,10 @@ namespace BK7231Flasher
             {
                 int logicalAddr = startSector + step * i;
                 int wireAddr = translateReadAddressForChip(logicalAddr);
-                addLog(wireAddr != logicalAddr
-                    ? formatHex(logicalAddr) + " -> " + formatHex(wireAddr) + "... "
-                    : formatHex(logicalAddr) + "... ");
+                string readProgress = wireAddr != logicalAddr
+                    ? "Reading " + formatHex(logicalAddr) + " -> " + formatHex(wireAddr) + "..."
+                    : "Reading " + formatHex(logicalAddr) + "...";
+                logger.setLogProgress(readProgress, Color.Black);
                 bool bOk;
                 if (directFlashAccessProfile)
                 {
@@ -2466,9 +2502,11 @@ namespace BK7231Flasher
                 if (bOk == false)
                 {
                     logger.setState("Reading failed.", Color.Red);
-                    addError("Failed reading page " + formatHex(logicalAddr) + "." + Environment.NewLine);
+                    logger.setLogProgress(readProgress + " Failed!", Color.Red);
+                    addError(Environment.NewLine + "Failed reading page " + formatHex(logicalAddr) + "." + Environment.NewLine);
                     return null;
                 }
+                logger.setLogProgress(readProgress + " Ok!", Color.Green);
                 logger.setProgress(i + 1, sectors);
             }
             addLog(Environment.NewLine + "Read operation finished; verifying result..." + Environment.NewLine);
@@ -3262,25 +3300,31 @@ namespace BK7231Flasher
 
             bool eraseUnit(int addr, int command, int pages, string unitName)
             {
+                string eraseProgress = "Erasing " + unitName + " " + formatHex(addr) + "...";
                 for (int attempt = 1; attempt <= ERASE_ATTEMPTS; attempt++)
                 {
                     if (cancellationToken.IsCancellationRequested)
                     {
                         logger.setState("Erase cancelled.", Color.Yellow);
+                        logger.setLogProgress(eraseProgress + " Cancelled.", Color.Orange);
+                        addLog(Environment.NewLine);
                         return false;
                     }
-                    addLog("Erasing " + unitName + " " + formatHex(addr) + "...");
+                    logger.setLogProgress(attempt == 1
+                        ? eraseProgress
+                        : eraseProgress + " Retry " + attempt + "/" + ERASE_ATTEMPTS + "...", Color.Black);
                     if (eraseSector(addr, command))
                     {
-                        addLog(" ok! ");
+                        logger.setLogProgress(eraseProgress + " Ok!", Color.Green);
                         completed += pages;
                         logger.setProgress(Math.Min(completed, sectors), sectors);
                         return true;
                     }
-                    addWarning(" failed (attempt " + attempt + "/" + ERASE_ATTEMPTS + "). ");
+                    logger.setLogProgress(eraseProgress + " Failed (attempt " + attempt + "/" + ERASE_ATTEMPTS + ").", Color.Orange);
                 }
                 logger.setState("Erase failed.", Color.Red);
-                addError(" Erasing " + unitName + " " + formatHex(addr) + " failed." + Environment.NewLine);
+                logger.setLogProgress(eraseProgress + " Failed!", Color.Red);
+                addError(Environment.NewLine + "Erasing " + unitName + " " + formatHex(addr) + " failed." + Environment.NewLine);
                 return false;
             }
 

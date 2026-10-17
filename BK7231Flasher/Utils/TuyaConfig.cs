@@ -534,13 +534,25 @@ List<KvEntry> GetVaultEntriesDedupedCached()
             if (LooksLikePsmBlob(vaultDecryptedRaw))
                 return ParseVaultPsm();
 
-            // Prefer KVStorage-style indexed parsing when it clearly applies.
-            // Fall back to the classic fixed-stride parser otherwise.
+            // Prefer KVStorage-style indexed parsing when it clearly applies. Most
+            // known stores use 128-byte pages; W600 SimpleFlash uses 64-byte pages.
+            // Keep the candidates independent and select the stronger structural
+            // result instead of applying one page size to every platform.
             try
             {
-                var kvsIndexed = ParseVaultKvStorage();
-                if (LooksLikeKvStorageResult(kvsIndexed))
-                    return kvsIndexed;
+                var candidates = new List<List<KvEntry>>();
+                var kvs128 = ParseVaultKvStorage(128, false);
+                if (LooksLikeKvStorageResult(kvs128))
+                    candidates.Add(kvs128);
+
+                // A single surviving W600 block is accepted only after its block
+                // checksum (during vault extraction) and all value checksums pass.
+                var kvs64 = ParseVaultKvStorage(64, true);
+                if (LooksLikeKvStorageResult(kvs64))
+                    candidates.Add(kvs64);
+
+                if (candidates.Count != 0)
+                    return candidates.OrderByDescending(x => x.Count).First();
             }
             catch
             {
@@ -575,6 +587,7 @@ List<KvEntry> GetVaultEntriesDedupedCached()
             public ushort BlockId;
             public byte PageId;
             public uint Element;
+            public uint Checksum;
             public List<KvStoragePart> Parts = new List<KvStoragePart>();
         }
 
@@ -585,12 +598,16 @@ List<KvEntry> GetVaultEntriesDedupedCached()
             public byte PageEnd;
         }
 
-        List<KvEntry> ParseVaultKvStorage()
+        List<KvEntry> ParseVaultKvStorage(int pageSize, bool requireValueChecksum)
         {
             var result = new List<KvEntry>();
             byte[] data = vaultDecryptedRaw;
-            if (data == null || data.Length < SECTOR_SIZE)
+            if (data == null || data.Length < SECTOR_SIZE ||
+                (pageSize != 64 && pageSize != 128))
                 return result;
+
+            int pagesPerBlock = SECTOR_SIZE / pageSize;
+            int expectedMapSize = pagesPerBlock / 8;
 
             // Duplicate block IDs are swap copies. The generation counter identifies the live copy.
             var blocksById = new Dictionary<ushort, int>();
@@ -625,21 +642,24 @@ List<KvEntry> GetVaultEntriesDedupedCached()
 
                 byte mapSize = data[blockStart + 14];
                 int mapOff = blockStart + 15;
-                if (mapSize == 0 || mapOff + mapSize > blockStart + 128)
+                if (mapSize == 0 || mapOff + mapSize > blockStart + pageSize ||
+                    (pageSize == 64 && mapSize != expectedMapSize))
                     continue;
 
                 // map_data bytes
-                for (int pi = 0; pi < 31; pi++)
+                for (int pi = 0; pi < pagesPerBlock - 1; pi++)
                 {
                     int pageId = pi + 1;
                     if (!IsIndexPage(data, mapOff, mapSize, pageId))
                         continue;
 
-                    int pageStart = blockStart + (pageId * 128);
-                    if (pageStart + 128 > data.Length)
+                    int pageStart = blockStart + (pageId * pageSize);
+                    if (pageStart + pageSize > blockStart + SECTOR_SIZE ||
+                        pageStart + pageSize > data.Length)
                         continue;
 
-                    if (TryParseKvStorageIndexPage(data, blockStart, ReadU16LE(data, blockStart + 8), (byte)pageId, pageStart, out var idx))
+                    if (TryParseKvStorageIndexPage(data, ReadU16LE(data, blockStart + 8),
+                        (byte)pageId, pageStart, pageSize, pagesPerBlock, out var idx))
                     {
                         indexes.Add(idx);
                     }
@@ -661,10 +681,12 @@ List<KvEntry> GetVaultEntriesDedupedCached()
 
             foreach (var idx in chosen)
             {
-                var value = ReassembleKvStorageValue(data, blocksById, idx);
+                var value = ReassembleKvStorageValue(data, blocksById, idx, pageSize);
                 if (value == null)
                     continue;
                 if (value.Length == 0 && idx.Length > 0)
+                    continue;
+                if (requireValueChecksum && CalculateAdditiveChecksum32(value) != idx.Checksum)
                     continue;
 
                 result.Add(new KvEntry
@@ -683,7 +705,8 @@ List<KvEntry> GetVaultEntriesDedupedCached()
 
         static bool IsIndexPage(byte[] data, int mapOff, int mapSize, int pageId)
         {
-            // pageId is 1..31. The map uses bits indexed by pageId.
+            // The map uses bits indexed by pageId. Valid IDs depend on page size:
+            // 1..31 for 128-byte pages and 1..63 for 64-byte pages.
             int byteIndex = pageId / 8;
             int bitIndex = pageId % 8;
 
@@ -694,7 +717,8 @@ List<KvEntry> GetVaultEntriesDedupedCached()
             return (m & (1 << bitIndex)) != 0;
         }
 
-        static bool TryParseKvStorageIndexPage(byte[] data, int blockStart, ushort blockId, byte pageId, int pageStart, out KvStorageIndex idx)
+        static bool TryParseKvStorageIndexPage(byte[] data, ushort blockId, byte pageId,
+            int pageStart, int pageSize, int pagesPerBlock, out KvStorageIndex idx)
         {
             idx = null;
 
@@ -714,12 +738,12 @@ List<KvEntry> GetVaultEntriesDedupedCached()
                     return false;
                 if (idxPageId != pageId)
                     return false;
-                if (nameLen == 0 || nameLen > 110) // defensive
+                if (nameLen == 0 || nameLen > pageSize - 18)
                     return false;
 
                 int nameOff = pageStart + 18;
                 int nameEnd = nameOff + nameLen;
-                if (nameEnd > pageStart + 128)
+                if (nameEnd > pageStart + pageSize)
                     return false;
 
                 // nameLen appears to include a NUL terminator in many firmwares
@@ -741,7 +765,7 @@ List<KvEntry> GetVaultEntriesDedupedCached()
                 string name = Encoding.ASCII.GetString(data, nameOff, realNameLen);
 
                 int partsOff = nameOff + nameLen;
-                int remaining = (pageStart + 128) - partsOff;
+                int remaining = (pageStart + pageSize) - partsOff;
                 // partsField==0 is valid for empty values on some firmwares (e.g. em_sys_env = "").
                 // In that case there may be no parts array at all.
                 if (partsField == 0)
@@ -753,6 +777,7 @@ List<KvEntry> GetVaultEntriesDedupedCached()
                         BlockId = idxBlockId,
                         PageId = idxPageId,
                         Element = element,
+                        Checksum = crc,
                         Parts = new List<KvStoragePart>(0)
                     };
                     return true;
@@ -780,7 +805,7 @@ List<KvEntry> GetVaultEntriesDedupedCached()
                     ushort pBlock = ReadU16LE(data, po);
                     byte pStart = data[po + 2];
                     byte pEnd = data[po + 3];
-                    if (pStart == 0 || pEnd == 0 || pStart > pEnd || pEnd > 31)
+                    if (pStart == 0 || pEnd == 0 || pStart > pEnd || pEnd >= pagesPerBlock)
                         return false;
 
                     parts.Add(new KvStoragePart { BlockId = pBlock, PageStart = pStart, PageEnd = pEnd });
@@ -793,6 +818,7 @@ List<KvEntry> GetVaultEntriesDedupedCached()
                     BlockId = idxBlockId,
                     PageId = idxPageId,
                     Element = element,
+                    Checksum = crc,
                     Parts = parts
                 };
 
@@ -804,7 +830,8 @@ List<KvEntry> GetVaultEntriesDedupedCached()
             }
         }
 
-        static byte[] ReassembleKvStorageValue(byte[] data, Dictionary<ushort, int> blocksById, KvStorageIndex idx)
+        static byte[] ReassembleKvStorageValue(byte[] data, Dictionary<ushort, int> blocksById,
+            KvStorageIndex idx, int pageSize)
         {
             if (idx == null || idx.Parts == null || idx.Parts.Count == 0 || idx.Length <= 0)
                 return Array.Empty<byte>();
@@ -820,11 +847,12 @@ List<KvEntry> GetVaultEntriesDedupedCached()
 
                     for (int pid = part.PageStart; pid <= part.PageEnd; pid++)
                     {
-                        int pageStart = blockStart + (pid * 128);
-                        if (pageStart + 128 > data.Length)
+                        int pageStart = blockStart + (pid * pageSize);
+                        if (pageStart + pageSize > blockStart + SECTOR_SIZE ||
+                            pageStart + pageSize > data.Length)
                             return Array.Empty<byte>();
 
-                        ms.Write(data, pageStart, 128);
+                        ms.Write(data, pageStart, pageSize);
                     }
                 }
 
@@ -843,6 +871,16 @@ List<KvEntry> GetVaultEntriesDedupedCached()
             {
                 return Array.Empty<byte>();
             }
+        }
+
+        static uint CalculateAdditiveChecksum32(byte[] data)
+        {
+            uint checksum = 0;
+            if (data == null)
+                return checksum;
+            for (int i = 0; i < data.Length; i++)
+                checksum += data[i];
+            return checksum;
         }
 
 
@@ -1103,11 +1141,6 @@ List<KvEntry> GetVaultEntriesDedupedCached()
             else
                 magicPosition = magicPosition < dataFlashOffset ? magicPosition : dataFlashOffset;
             FormMain.Singleton?.addLog($"Tuya config extractor - magic is at {magicPosition} (0x{magicPosition:X}) " + Environment.NewLine, System.Drawing.Color.DarkSlateGray);
-            if(bestPages.Count < 2)
-            {
-                FormMain.Singleton?.addLog("Failed to extract Tuya keys - config not found" + Environment.NewLine, System.Drawing.Color.Orange);
-                return false;
-            }
 
             //bestPages.Sort((a, b) => a.Seq.CompareTo(b.Seq));
             using var ms = new MemoryStream();
@@ -1116,6 +1149,19 @@ List<KvEntry> GetVaultEntriesDedupedCached()
 
             descryptedRaw = ms.ToArray();
             vaultDecryptedRaw = descryptedRaw;
+            if(bestPages.Count == 1)
+            {
+                var strict128 = ParseVaultKvStorage(128, true);
+                var strict64 = ParseVaultKvStorage(64, true);
+                if(!LooksLikeKvStorageResult(strict128) && !LooksLikeKvStorageResult(strict64))
+                {
+                    FormMain.Singleton?.addLog("Failed to extract Tuya keys - the single data block did not pass strict record validation." + Environment.NewLine, System.Drawing.Color.Orange);
+                    descryptedRaw = null;
+                    vaultDecryptedRaw = null;
+                    return false;
+                }
+                FormMain.Singleton?.addLog("Tuya vault contains one checksum-valid data block; strict record validation passed." + Environment.NewLine, System.Drawing.Color.DarkSlateGray);
+            }
             return true;
         }
 
@@ -2207,12 +2253,12 @@ List<KvEntry> GetVaultEntriesDedupedCached()
                     return json;
 
                 // System.Text.Json escapes some characters by default (e.g. + as \\u002B, and some HTML-sensitive chars).
-                // For UI readability, unescape those sequences in the emitted JSON text.
+                // Keep quote characters escaped so string values containing JSON remain valid.
                 return json
                     .Replace("\\u002B", "+").Replace("\\u002b", "+")
                     .Replace("\\u003C", "<").Replace("\\u003c", "<")
                     .Replace("\\u003E", ">").Replace("\\u003e", ">")
-                    .Replace("\\u0026", "&").Replace("\\u0022", "\"")
+                    .Replace("\\u0026", "&").Replace("\\u0022", "\\\"")
                     .Replace("\\u003D", "=").Replace("\\u003d", "=")
                     .Replace("\\u0027", "'");
             }

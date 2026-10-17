@@ -1,5 +1,5 @@
 @echo off
-:: Build script for BK7231GUIFlashTool
+:: Build script for OpenIOT flasher
 :: Found MSBuild path: C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe
 
 set MSBUILD_PATH="C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"
@@ -14,7 +14,7 @@ if not exist %MSBUILD_PATH% (
 set FLASHERVERSION=1.0.0
 if not "%~1"=="" set FLASHERVERSION=%~1
 
-echo [INFO] Building BK7231Flasher version %FLASHERVERSION%...
+echo [INFO] Building OpenIOT flasher version %FLASHERVERSION%...
 echo [INFO] Target: Release (Any CPU)
 
 %MSBUILD_PATH% BK7231Flasher.sln /p:Configuration=Release /p:Platform="Any CPU" /p:FLASHERVERSION=%FLASHERVERSION% /t:Restore;Build
@@ -22,7 +22,7 @@ echo [INFO] Target: Release (Any CPU)
 if %ERRORLEVEL% equ 0 (
     echo.
     echo [SUCCESS] Build completed successfully!
-    echo [INFO] Executable path: BK7231Flasher\bin\Release\BK7231Flasher.exe
+    echo [INFO] Executable path: BK7231Flasher\bin\Release\OpenIOT_flasher.exe
 ) else (
     echo.
     echo [ERROR] Build failed with error code %ERRORLEVEL%
