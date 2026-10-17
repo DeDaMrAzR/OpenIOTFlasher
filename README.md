@@ -1,3 +1,6 @@
+<img width="1362" height="705" alt="image" src="https://github.com/user-attachments/assets/b3596685-3b73-493c-b4df-b6f21e5afb13" />
+
+
 # OpenIOTFlasher
 
 OpenIOTFlasher is a simple Windows application that allows you to back up and flash OpenBK/OpenBeken and related Open\* firmware projects to supported IoT chips without extensive programming knowledge. The tool originally focused on Beken BK7231T/BK7231N devices, but the current version supports a wider set of chip and platform modes.
@@ -112,11 +115,7 @@ No command line and no strange arguments required.
     - Power the device from either the bridge or an external power source. All Beken based modules require 3.3v.  
       ⚠️ **NEVER try hacking devices while connected to mains power!** 
 
-3. Open our flasher:
-
-<img width="1365" height="707" alt="image" src="https://github.com/user-attachments/assets/ff4efbe7-4bce-4098-a0ea-bf27806a8bbc" />
-
-
+3. Open our flasher
 4. Select your COM port of USB to UART converter
 5. Select proper platform
 6. Click "Download latest release" to get the proper binary file, or place a matching firmware file manually in the `firmwares` directory
