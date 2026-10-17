@@ -169,6 +169,17 @@ namespace BK7231Flasher
 		{
 			comboBox.FormattingEnabled = true;
 			comboBox.Format += FormatPortDisplay;
+			comboBox.DropDown += ResizePortDropDown;
+		}
+
+		void ResizePortDropDown(object sender, EventArgs e)
+		{
+			var comboBox = (ComboBox)sender;
+			int width = comboBox.Width;
+			foreach (object item in comboBox.Items)
+				width = Math.Max(width, TextRenderer.MeasureText(comboBox.GetItemText(item), comboBox.Font).Width
+					+ SystemInformation.VerticalScrollBarWidth + 4);
+			comboBox.DropDownWidth = width;
 		}
 
 		void FormatPortDisplay(object sender, ListControlConvertEventArgs e)
@@ -183,9 +194,9 @@ namespace BK7231Flasher
 			byte[] buffer = new byte[2048];
 			if (!SetupDiGetDeviceRegistryPropertyW(deviceSet, ref deviceInfo, property,
 				out uint registryType, buffer, (uint)buffer.Length, out uint requiredSize)
-				|| registryType != 1 || requiredSize < 2 || requiredSize > buffer.Length)
+				|| (registryType != 1 && registryType != 7) || requiredSize < 2 || requiredSize > buffer.Length)
 				return "";
-			return Encoding.Unicode.GetString(buffer, 0, (int)requiredSize).TrimEnd('\0').Trim();
+			return Encoding.Unicode.GetString(buffer, 0, (int)requiredSize).Split('\0')[0].Trim();
 		}
 
 		static Dictionary<string, string> ReadPortDescriptions(string[] ports)
@@ -225,16 +236,24 @@ namespace BK7231Flasher
 									string description = ReadPortDeviceDescription(deviceSet, ref deviceInfo, 12);
 									if (string.IsNullOrWhiteSpace(description))
 										description = ReadPortDeviceDescription(deviceSet, ref deviceInfo, 0);
-									description = Regex.Replace(description, @"\s*\(" + Regex.Escape(port) + @"\)",
+									description = Regex.Replace(description, @"\s*\(" + Regex.Escape(port) + @"\)\s*$",
 										"", RegexOptions.IgnoreCase).Trim();
-									Match chip = Regex.Match(description, @"\b(CH(?:340|342|9102)|CP210(?:[0-9]+|X))\b",
+									string hardwareId = ReadPortDeviceDescription(deviceSet, ref deviceInfo, 1);
+									Match usbId = Regex.Match(hardwareId, @"VID_([0-9A-F]{4}).*?PID_([0-9A-F]{4})",
 										RegexOptions.IgnoreCase);
-									if (chip.Success)
-										description = chip.Value.StartsWith("CP210", StringComparison.OrdinalIgnoreCase)
-											? "CP210x" : chip.Value.ToUpperInvariant();
 									if (!string.IsNullOrWhiteSpace(description)
 										&& !string.Equals(description, port, StringComparison.OrdinalIgnoreCase))
+									{
+										if (usbId.Success)
+										{
+											string manufacturer = ReadPortDeviceDescription(deviceSet, ref deviceInfo, 11);
+											if (!string.IsNullOrWhiteSpace(manufacturer))
+												description += " - " + manufacturer;
+											description += " (" + usbId.Groups[1].Value.ToUpperInvariant() + "/"
+												+ usbId.Groups[2].Value.ToUpperInvariant() + ")";
+										}
 										descriptions[port] = description;
+									}
 								}
 							}
 							catch
@@ -916,12 +935,13 @@ namespace BK7231Flasher
         }
 
         void applySerialControlState(ComboBox chipTypeComboBox, ComboBox uartComboBox, ComboBox baudRateComboBox,
-            bool operationControlsEnabled, bool allowPortSelectionWithoutPlatform = false)
+			bool operationControlsEnabled, bool allowSerialSelectionWithoutPlatform = false)
         {
             BKType selectedType = getSelectedChipType(chipTypeComboBox);
             bool usesSerialPort = selectedType != BKType.Invalid && FlashPlatformCatalog.UsesSerialPort(selectedType);
-            uartComboBox.Enabled = operationControlsEnabled && (usesSerialPort || allowPortSelectionWithoutPlatform);
-            baudRateComboBox.Enabled = operationControlsEnabled && usesSerialPort;
+			uartComboBox.Enabled = operationControlsEnabled && (usesSerialPort || allowSerialSelectionWithoutPlatform);
+			baudRateComboBox.Enabled = operationControlsEnabled && (usesSerialPort
+				|| (allowSerialSelectionWithoutPlatform && selectedType == BKType.Invalid));
         }
         bool interruptIfRequired()
         {
