@@ -53,4 +53,4 @@ R cmp / W cmp - Read/write compression via custom flasher stub; ➖ means not ap
 ⁵ W600 support is validated on 1 MiB devices. 2 MiB devices have not been tested.<br>
 ⁶ OBK config reads work, but standalone OBK config writes are not implemented.<br>
 ⁷ RF partition restore and relocation are not defined for this platform.<br>
-⁸ SV6x66 backup and guarded full-image restore are limited to the tested stock `FWSWES-SV04MATE-3.7.1` profile with JEDEC `C8 40 15` and a 2 MiB flash. A full read stages the embedded loader by erasing and replacing inactive Bank B, so it is not a pristine pre-staging Bank-B backup. Restore overwrites the complete flash from a matching 2 MiB image; other SV6x66 device profiles are not validated.<br>
+⁸ SV6x66 backup stages the embedded loader by erasing and replacing inactive Bank B, so it is not a pristine pre-staging Bank-B backup. Restore overwrites the complete 2 MiB flash from a matching full-flash image.<br>
