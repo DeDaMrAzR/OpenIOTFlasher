@@ -2594,17 +2594,15 @@ namespace BK7231Flasher
             buttonCustomOperation.Visible = b;
 			chkIgnoreCRCErr.Visible = b;
 			chkUseCompression.Visible = b;
-			updateFirmwareBrowseVisibility(b);
+			updateFirmwareBrowseVisibility();
 		}
 
-		void updateFirmwareBrowseVisibility(bool advanced)
+		void updateFirmwareBrowseVisibility()
 		{
-			bool b = advanced || curType == BKType.SV6X66;
-
             // Advanced-only firmware browse button + combobox width management
             if (buttonBrowseFirmware != null)
             {
-                buttonBrowseFirmware.Visible = b;
+				buttonBrowseFirmware.Visible = true;
             }
 
         }
