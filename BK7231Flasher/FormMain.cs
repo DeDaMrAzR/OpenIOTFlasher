@@ -1851,12 +1851,10 @@ namespace BK7231Flasher
         }
         public void refreshFirmwaresList()
         {
+            string previousSelection = comboBoxFirmware.SelectedItem as string;
+            string previousSource = chosenSourceFile;
             comboBoxFirmware.Items.Clear();
             bool firmwareDirectoryExists = Directory.Exists(firmwaresPath);
-            if (!firmwareDirectoryExists && curType != BKType.SV6X66)
-            {
-                return;
-            }
             int found = 0;
             if (firmwareDirectoryExists)
 				found += addToFirmaresList(firmwaresPath);
@@ -1870,7 +1868,18 @@ namespace BK7231Flasher
             }
             labelMatchingFirmwares.Text = "" + found + " total bins, " + comboBoxFirmware.Items.Count + " matching.";
 
-            if (comboBoxFirmware.Items.Count > 0)
+            if (previousSelection != null && comboBoxFirmware.Items.Contains(previousSelection))
+            {
+                comboBoxFirmware.SelectedItem = previousSelection;
+            }
+            else if (previousSelection == null && !string.IsNullOrEmpty(previousSource) && File.Exists(previousSource))
+            {
+                comboBoxFirmware.SelectedIndex = -1;
+                comboBoxFirmware.DropDownStyle = ComboBoxStyle.DropDown;
+                comboBoxFirmware.Text = previousSource;
+                chosenSourceFile = previousSource;
+            }
+            else if (comboBoxFirmware.Items.Count > 0)
             {
                 comboBoxFirmware.SelectedIndex = 0;
             }
