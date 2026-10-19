@@ -33,7 +33,7 @@ namespace BK7231Flasher
 
         private void buttonOk_Click(object sender, EventArgs e)
         {
-            result = textBox1.Text;
+			result = Regex.Replace(textBox1.Text, @"\s", "_");
             bIsCanceled = false;
             this.Close();
         }
@@ -41,9 +41,13 @@ namespace BK7231Flasher
         private void textBox1_TextChanged(object sender, EventArgs e)
         {
             var textboxSender = (TextBox)sender;
-            var cursorPosition = textboxSender.SelectionStart;
-            textboxSender.Text = Regex.Replace(textboxSender.Text, "[^0-9a-zA-Z_-]", "");
-            textboxSender.SelectionStart = cursorPosition;
+			var sanitizedText = Regex.Replace(textboxSender.Text, @"[^0-9a-zA-Z_\s-]", "");
+			if (sanitizedText != textboxSender.Text)
+			{
+				var cursorPosition = textboxSender.SelectionStart;
+				textboxSender.Text = sanitizedText;
+				textboxSender.SelectionStart = cursorPosition;
+			}
         }
     }
 }

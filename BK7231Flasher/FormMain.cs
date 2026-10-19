@@ -25,13 +25,12 @@ namespace BK7231Flasher
         public static FormMain Singleton;
         int chosenBaudRate;
         string chosenSourceFile;
-        int firmwareComboWidthNormal = -1;
-        int firmwareComboWidthAdvanced = -1;
         FormCustom formCustom;
         CancellationTokenSource cts;
 		volatile bool sv6x66OperationLockActive;
 		BKType activeOperationPlatform = BKType.Invalid;
 		TabPage sv6x66OperationLockedTab;
+		bool terminalTabChangePromptActive;
 		bool sv6x66OperationSavedAllowDrop;
 		readonly Dictionary<Control, bool> sv6x66OperationEnabledStates = new Dictionary<Control, bool>();
 		const int Sv6x66FullFlashBytes = 0x200000;
@@ -43,6 +42,13 @@ namespace BK7231Flasher
 			internal byte[] Image;
 			internal string Sha256;
 			internal bool? FinalReadbackVerification;
+		}
+		sealed class Sv6x66ApplicationRequest
+		{
+			internal SvApplicationImage Image;
+			internal bool? FinalReadbackVerification;
+			internal bool BackupFirst;
+			internal string BackupName;
 		}
 
         enum OperationUiTarget
@@ -86,6 +92,7 @@ namespace BK7231Flasher
             Singleton = this;
             InitializeComponent();
 			tabControl1.Selecting += tabControl1_Selecting;
+			tabControl1.Deselecting += tabControl1_Deselecting;
             ConfigureLogContextMenu(textBoxLog);
             ConfigureLogContextMenu(textBoxReadRomLog);
             InitializeBl602IoExtractorTab();
@@ -94,7 +101,7 @@ namespace BK7231Flasher
 			ConfigurePortDisplay(comboBoxReadRomUART);
 			ConfigurePortDisplay(comboBoxTerminalPort);
             var version = Assembly.GetExecutingAssembly().GetCustomAttribute<BuildVersion>().Value;
-            Text = $"OpenIOT flasher {(string.IsNullOrWhiteSpace(version) ? "local" : version)}";
+			Text = $"OpenIOTFlasher {(string.IsNullOrWhiteSpace(version) ? "(local build)" : version)}";
         }
 
         void ConfigureLogContextMenu(RichTextBox logTextBox)
@@ -135,11 +142,40 @@ namespace BK7231Flasher
 			return SupportsFinalReadbackOption() ? (bool?)checkBoxVerifyBackupWrite.Checked : null;
 		}
 
-		void UpdateFinalReadbackControl(bool operationControlsEnabled = true)
+		bool SupportsCompressionOption()
 		{
-			checkBoxVerifyBackupWrite.Enabled = operationControlsEnabled && worker == null
+			switch (curType)
+			{
+				case BKType.ECR6600:
+				case BKType.RTL87X0C:
+				case BKType.LN882H:
+				case BKType.LN8825:
+				case BKType.W800:
+				case BKType.RDA5981:
+				case BKType.TR6260:
+				case BKType.GD32VW553:
+				case BKType.RTL8710B:
+				case BKType.RTL8720D:
+				case BKType.RTL8721DA:
+				case BKType.RTL8720E:
+				case BKType.OPL1000A2:
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		void UpdateAdvancedCheckboxControls(bool operationControlsEnabled = true)
+		{
+			bool enabled = operationControlsEnabled && worker == null
 				&& !terminalFlasherTasks.Exists(task => !task.IsCompleted)
-				&& !sv6x66OperationLockActive && SupportsFinalReadbackOption();
+				&& !sv6x66OperationLockActive;
+			checkBoxVerifyBackupWrite.Enabled = enabled && SupportsFinalReadbackOption();
+			checkBoxAllowBackup.Enabled = enabled;
+			checkBoxOverwriteBootloader.Enabled = enabled && (curType == BKType.BK7231N || curType == BKType.BK7231M);
+			checkBoxSkipKeyCheck.Enabled = enabled && IsBeken;
+			chkIgnoreCRCErr.Enabled = enabled && (IsBeken || SupportsCompressionOption());
+			chkUseCompression.Enabled = enabled && SupportsCompressionOption();
 		}
 		Dictionary<string, string> portDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -377,6 +413,14 @@ namespace BK7231Flasher
 				&& tryGetSv6x66RestorePath(out unusedPath);
 		}
 
+		bool isSv6x66ApplicationSelectionEligible()
+		{
+			return curType == BKType.SV6X66 && worker == null
+				&& !string.IsNullOrEmpty(chosenSourceFile)
+				&& SvApplicationImage.IsApplicationFileName(chosenSourceFile)
+				&& File.Exists(chosenSourceFile);
+		}
+
 		static string sha256Hex(byte[] data)
 		{
 			using (SHA256 sha256 = SHA256.Create())
@@ -406,6 +450,7 @@ namespace BK7231Flasher
                 comboBoxFirmware.Text = file;
                 chosenSourceFile = file;
                 addLog("You dragged and dropped file " + file + "...",Color.Black);
+				if (curType == BKType.SV6X66) updatePlatformCapabilityButtons(worker == null);
             }
         }
         // string label_startRead = "Start Read Flash (Full backup)";
@@ -1367,6 +1412,27 @@ namespace BK7231Flasher
 			}
 		}
 
+		void installSv6x66ApplicationThread(object state)
+		{
+			try
+			{
+				Sv6x66ApplicationRequest request = state as Sv6x66ApplicationRequest
+					?? throw new InvalidOperationException("SV6x66 application request is missing.");
+				clearUp();
+				createFlasher(request.FinalReadbackVerification);
+				SV6x66Flasher target = flasher as SV6x66Flasher
+					?? throw new InvalidOperationException("SV6x66 application worker received the wrong flasher.");
+				if (request.BackupFirst) target.setBackupName(request.BackupName);
+				target.doInstallApplication(request.Image, request.BackupFirst);
+				if (request.BackupFirst) refreshFirmwaresListOnUiThread();
+			}
+			catch (Exception exception)
+			{
+				addLog("SV6x66 application installation stopped: " + exception.Message + Environment.NewLine, Color.Red);
+			}
+			finally { completeSv6x66Operation(); }
+		}
+
         void blankThread(object oParm)
         {
             clearUp();
@@ -1521,6 +1587,7 @@ namespace BK7231Flasher
         }
         public bool checkFirmwareForCurType(string s)
         {
+			bool sv6x66Backup = s.StartsWith(Sv6x66BackupPrefix, StringComparison.Ordinal);
             if (s.StartsWith("readResult_"))
             {
                 s = s.Substring("readResult_".Length);
@@ -1528,6 +1595,10 @@ namespace BK7231Flasher
             }
             switch(curType)
             {
+				case BKType.SV6X66:
+					return (sv6x66Backup && s.EndsWith(".bin", StringComparison.OrdinalIgnoreCase))
+						|| (s.StartsWith("OpenSV6X66_", StringComparison.Ordinal)
+							&& SvApplicationImage.IsApplicationFileName(s));
                 case BKType.BK7231T:
                 case BKType.BK7231U:
                 case BKType.BK7231N:
@@ -1952,6 +2023,8 @@ namespace BK7231Flasher
             {
                 ofd.Title = "Select firmware to flash";
                 ofd.Filter = "Firmware files (*.bin;*.rbl;*.fls;*.img)|*.bin;*.rbl;*.fls;*.img|All files (*.*)|*.*";
+				if (curType == BKType.SV6X66)
+					ofd.Filter = "SV6x66 UART firmware (*.bin)|*.bin|SV6x66 OTA firmware (*.sv6ota)|*.sv6ota|All files (*.*)|*.*";
                 ofd.CheckFileExists = true;
                 ofd.Multiselect = false;
                 ofd.RestoreDirectory = true;
@@ -1968,6 +2041,7 @@ namespace BK7231Flasher
                 chosenSourceFile = ofd.FileName;
 
                 addLog("Selected firmware file " + ofd.FileName + "." + Environment.NewLine, Color.Black);
+				if (curType == BKType.SV6X66) updatePlatformCapabilityButtons(worker == null);
             }
         }
 
@@ -1984,7 +2058,7 @@ namespace BK7231Flasher
 			if (curType == BKType.SV6X66)
 			{
 				DialogResult result = MessageBox.Show(
-					"Creating an SV6x66 backup will erase and replace the inactive Bank B. Its previous contents cannot be preserved.\n\nDo you want to continue?",
+					"Loader erases inactive bank and it can not be preserved!",
 					"SV6x66 backup warning",
 					MessageBoxButtons.YesNo,
 					MessageBoxIcon.Warning);
@@ -2070,6 +2144,32 @@ namespace BK7231Flasher
         {
 			using (new TerminalFlasherReservation(this))
 			{
+			if (curType == BKType.SV6X66)
+			{
+				if (!isSv6x66ApplicationSelectionEligible() || !SvApplicationImage.HasEmbeddedLoaders)
+				{
+					MessageBox.Show("Select an SV6x66 application firmware file in a build with its embedded loaders.",
+						"SV6x66 backup then write unavailable", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+					return;
+				}
+				SvApplicationImage application;
+				try { application = SvApplicationImage.Load(chosenSourceFile); }
+				catch (Exception exception)
+				{
+					MessageBox.Show("The firmware or embedded SV6x66 loader could not be validated before connecting: "
+						+ exception.Message, "SV6x66 application unavailable", MessageBoxButtons.OK, MessageBoxIcon.Error);
+					return;
+				}
+				if (!doGenericOperationPreparations() || !promptForBackupName()) return;
+				if (MessageBox.Show("Loader erases inactive bank and it can not be preserved!",
+					"SV6x66 backup then firmware installation", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+					return;
+				startWorkerThread(installSv6x66ApplicationThread, new Sv6x66ApplicationRequest {
+					Image = application, BackupFirst = true, BackupName = lastBackupNameEnteredByUser,
+					FinalReadbackVerification = CaptureFinalReadbackOption()
+				});
+				return;
+			}
             showObkConfigFormIfPossible();
             if (doGenericOperationPreparations() == false)
             {
@@ -2088,7 +2188,7 @@ namespace BK7231Flasher
         private void timer100ms_Tick(object sender, EventArgs e)
         {
             scanForCOMPorts();
-			UpdateFinalReadbackControl();
+			UpdateAdvancedCheckboxControls();
         }
         void setButtonStates(bool b)
         {
@@ -2120,6 +2220,41 @@ namespace BK7231Flasher
 		{
 			if (sv6x66OperationLockActive && e.TabPage != sv6x66OperationLockedTab)
 				e.Cancel = true;
+		}
+
+		void tabControl1_Deselecting(object sender, TabControlCancelEventArgs e)
+		{
+			if (sv6x66OperationLockActive)
+			{
+				e.Cancel = true;
+				return;
+			}
+			if (e.TabPage != tabPageTerminal)
+				return;
+			if (terminalTabChangePromptActive)
+			{
+				e.Cancel = true;
+				return;
+			}
+			if (!IsTerminalConnected)
+				return;
+
+			e.Cancel = true;
+			terminalTabChangePromptActive = true;
+			try
+			{
+				if (MessageBox.Show(this, "The terminal port will be disconnected. Continue?",
+					"Terminal connection", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+					MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+					return;
+				CancelTerminalReconnect();
+				DisconnectTerminal();
+				e.Cancel = false;
+			}
+			finally
+			{
+				terminalTabChangePromptActive = false;
+			}
 		}
 
 		void beginSv6x66OperationLock(OperationUiTarget uiTarget, BKType operationPlatform)
@@ -2238,21 +2373,26 @@ namespace BK7231Flasher
 
 		void updatePlatformCapabilityButtons(bool operationControlsEnabled)
 		{
-			UpdateFinalReadbackControl(operationControlsEnabled);
+			refreshAdvancedOptions();
+			UpdateAdvancedCheckboxControls(operationControlsEnabled);
 			bool sv6x66ReadOnly = curType == BKType.SV6X66;
 			bool obkConfigSupported = IsBeken == false || OBKFlashLayout.hasConfigLocation(curType);
 			bool rfSupported = IsBeken == false || RFPartitionUtil.getRFOffset(curType) >= 0;
 			buttonTestReadWrite.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonTestWrite.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonWriteOnly.Enabled = operationControlsEnabled
-				&& (!sv6x66ReadOnly || isSv6x66RestoreSelectionEligible());
-			buttonDoBackupAndFlashNew.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+				&& (!sv6x66ReadOnly || isSv6x66RestoreSelectionEligible()
+					|| (isSv6x66ApplicationSelectionEligible() && SvApplicationImage.HasEmbeddedLoaders));
+			if (isSv6x66ApplicationSelectionEligible() && !SvApplicationImage.HasEmbeddedLoaders)
+				addLog("SV6x66 firmware installation is unavailable in this flasher build." + Environment.NewLine, Color.DarkOrange);
+			buttonDoBackupAndFlashNew.Enabled = operationControlsEnabled
+				&& (!sv6x66ReadOnly || (isSv6x66ApplicationSelectionEligible() && SvApplicationImage.HasEmbeddedLoaders));
 			buttonCustomOperation.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonEraseAll.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonBlankCheck.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonDetect.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
 			buttonDownloadLatest.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
-			buttonBrowseFirmware.Enabled = operationControlsEnabled && !sv6x66ReadOnly;
+			buttonBrowseFirmware.Enabled = operationControlsEnabled;
 			buttonWriteOBKConfig.Enabled = operationControlsEnabled && obkConfigSupported && !sv6x66ReadOnly;
 			buttonReadOBKConfig.Enabled = operationControlsEnabled && obkConfigSupported && !sv6x66ReadOnly;
 			buttonRestoreRF.Enabled = operationControlsEnabled && rfSupported && !sv6x66ReadOnly;
@@ -2449,25 +2589,24 @@ namespace BK7231Flasher
             buttonBlankCheck.Visible = b;
             buttonDetect.Visible = b;
             checkBoxAllowBackup.Visible = b;
-            checkBoxOverwriteBootloader.Visible = b;
-            checkBoxSkipKeyCheck.Visible = b;
+			checkBoxOverwriteBootloader.Visible = b;
+			checkBoxSkipKeyCheck.Visible = b;
             buttonCustomOperation.Visible = b;
-            chkIgnoreCRCErr.Visible = b;
-            chkUseCompression.Visible = b;
+			chkIgnoreCRCErr.Visible = b;
+			chkUseCompression.Visible = b;
+			updateFirmwareBrowseVisibility(b);
+		}
+
+		void updateFirmwareBrowseVisibility(bool advanced)
+		{
+			bool b = advanced || curType == BKType.SV6X66;
 
             // Advanced-only firmware browse button + combobox width management
-            if (firmwareComboWidthNormal < 0)
-            {
-                firmwareComboWidthNormal = comboBoxFirmware.Width;
-                firmwareComboWidthAdvanced = firmwareComboWidthNormal - 26;
-            }
-
             if (buttonBrowseFirmware != null)
             {
                 buttonBrowseFirmware.Visible = b;
             }
 
-            comboBoxFirmware.Width = b ? firmwareComboWidthAdvanced : firmwareComboWidthNormal;
         }
         
         private void buttonOpenBackupsDir_Click(object sender, EventArgs e)
@@ -2503,6 +2642,26 @@ namespace BK7231Flasher
 			{
 			if (curType == BKType.SV6X66)
 			{
+				if (isSv6x66ApplicationSelectionEligible())
+				{
+					SvApplicationImage application;
+					try { application = SvApplicationImage.Load(chosenSourceFile); }
+					catch (Exception exception)
+					{
+						MessageBox.Show("The firmware or embedded SV6x66 loader could not be validated before connecting: "
+							+ exception.Message,
+							"SV6x66 application unavailable", MessageBoxButtons.OK, MessageBoxIcon.Error);
+						return;
+					}
+					if (!doGenericOperationPreparations()) return;
+					if (MessageBox.Show("Loader erases inactive bank and it can not be preserved!",
+						"SV6x66 firmware installation", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+						return;
+					startWorkerThread(installSv6x66ApplicationThread, new Sv6x66ApplicationRequest {
+						Image = application, FinalReadbackVerification = CaptureFinalReadbackOption()
+					});
+					return;
+				}
 				if (doGenericOperationPreparations() == false)
 					return;
 				string sourcePath;
@@ -2540,7 +2699,7 @@ namespace BK7231Flasher
 					FinalReadbackVerification = CaptureFinalReadbackOption(),
 				};
 				DialogResult confirmation = MessageBox.Show(
-					"This experimental SV6x66 full-flash restore overwrites the complete 2 MiB flash: the bootloader, both OTA banks, boot selector, calibration, and filesystem. The selected backup's Bank B already contains the loader-staging change. An interruption can leave the device unbootable.\n\nContinue?",
+					"If this procedure is stopped before completion, restoring chip functionality will require SPI recovery!",
 					"SV6x66 full-flash restore warning",
 					MessageBoxButtons.YesNo,
 					MessageBoxIcon.Warning);

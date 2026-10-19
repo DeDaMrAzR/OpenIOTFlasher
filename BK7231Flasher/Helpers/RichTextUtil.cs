@@ -9,41 +9,59 @@ namespace BK7231Flasher
     {
         [DllImport("user32.dll")]
         private static extern int SendMessage(IntPtr hWnd, int wMsg, int wParam, int lParam);
+		[DllImport("user32.dll", EntryPoint = "SendMessageW")]
+		private static extern IntPtr SendMessage(IntPtr hWnd, int wMsg, IntPtr wParam, ref Point lParam);
 
         private const int WM_VSCROLL = 0x115;
         private const int SB_BOTTOM  = 7;
-		private const int EM_GETFIRSTVISIBLELINE = 0xCE;
-		private const int EM_LINESCROLL = 0xB6;
+		private const int WM_SETREDRAW = 0x0B;
+		private const int EM_GETSCROLLPOS = 0x04DD;
+		private const int EM_SETSCROLLPOS = 0x04DE;
 
 		public static void AppendText(RichTextBox box, string text, Color color, bool scrollToBottom = true)
 		{
-			int firstVisibleLine = 0;
+			IntPtr handle = box.Handle;
+			Point scrollPosition = Point.Empty;
 			int selectionStart = 0;
 			int selectionLength = 0;
 			if (!scrollToBottom)
 			{
-				firstVisibleLine = SendMessage(box.Handle, EM_GETFIRSTVISIBLELINE, 0, 0);
+				SendMessage(handle, EM_GETSCROLLPOS, IntPtr.Zero, ref scrollPosition);
 				selectionStart = box.SelectionStart;
 				selectionLength = box.SelectionLength;
 			}
-
-			box.SelectionStart = box.TextLength;
-			box.SelectionLength = 0;
-
-			box.SelectionColor = color;
-			box.AppendText(text);
-			box.SelectionColor = box.ForeColor;
-
-			if (scrollToBottom)
+			bool suspendRedraw = box.Visible;
+			if (suspendRedraw)
+				SendMessage(handle, WM_SETREDRAW, 0, 0);
+			try
 			{
-				SendMessage(box.Handle, WM_VSCROLL, SB_BOTTOM, 0);
-				return;
+				box.Select(box.TextLength, 0);
+				box.SelectionColor = color;
+				box.AppendText(text);
+				box.SelectionColor = box.ForeColor;
+				if (scrollToBottom)
+					ScrollToBottom(box);
+				else
+				{
+					selectionStart = Math.Min(selectionStart, box.TextLength);
+					box.Select(selectionStart, Math.Min(selectionLength, box.TextLength - selectionStart));
+					SendMessage(handle, EM_SETSCROLLPOS, IntPtr.Zero, ref scrollPosition);
+				}
 			}
+			finally
+			{
+				if (suspendRedraw)
+				{
+					SendMessage(handle, WM_SETREDRAW, 1, 0);
+					box.Invalidate();
+				}
+			}
+		}
 
-			box.SelectionStart = Math.Min(selectionStart, box.TextLength);
-			box.SelectionLength = Math.Min(selectionLength, box.TextLength - box.SelectionStart);
-			int currentFirstVisibleLine = SendMessage(box.Handle, EM_GETFIRSTVISIBLELINE, 0, 0);
-			SendMessage(box.Handle, EM_LINESCROLL, 0, firstVisibleLine - currentFirstVisibleLine);
+		public static void ScrollToBottom(RichTextBox box)
+		{
+			box.Select(box.TextLength, 0);
+			box.ScrollToCaret();
 		}
 
         public static void ReplaceCurrentLine(RichTextBox box, string text, Color color)

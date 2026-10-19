@@ -530,13 +530,13 @@ namespace BK7231Flasher
 			}
 			if (operation == CliOperation.Read && !acknowledgeBankBOverwrite)
 			{
-				Console.Error.WriteLine("Error: SV6x66 staged backup erases and replaces inactive Bank B before reading flash.");
-				Console.Error.WriteLine("Re-run with --ack-sv6x66-bank-b-overwrite only if you accept that mutation.");
+				Console.Error.WriteLine("Error: SV6x66 staged backup erases and replaces the inactive application bank (A or B); the saved image is normalized after staging and cannot preserve that bank's previous contents.");
+				Console.Error.WriteLine("Re-run with --ack-sv6x66-bank-b-overwrite only if you accept that mutation. This legacy flag name now acknowledges either inactive bank.");
 				return false;
 			}
 			if (operation == CliOperation.Write && !acknowledgeFullRestore)
 			{
-				Console.Error.WriteLine("Error: SV6x66 fwrite overwrites the complete 2 MiB flash, including boot-critical data.");
+				Console.Error.WriteLine("Error: SV6x66 fwrite requires --ack-sv6x66-full-restore. If this procedure is stopped before completion, restoring chip functionality will require SPI recovery!");
 				Console.Error.WriteLine("Re-run with --ack-sv6x66-full-restore only if you accept that destructive restore.");
 				return false;
 			}
@@ -910,9 +910,10 @@ namespace BK7231Flasher
             Console.WriteLine("  --size <0x1000>        Length in bytes (hex or decimal, for read_flash/write_flash)");
             Console.WriteLine("  --out <name>           Output name for backup (default: cliBackup)");
 			Console.WriteLine("  --ack-sv6x66-bank-b-overwrite");
-			Console.WriteLine("                         Required for SV6x66 staged backup; staging replaces Bank B");
+			Console.WriteLine("                         Legacy flag name: permits replacing inactive A or B for a normalized SV6x66 backup");
+			Console.WriteLine("                         Staging uses 115200 baud; --baud selects the subsequent flash-read rate");
 			Console.WriteLine("  --ack-sv6x66-full-restore");
-			Console.WriteLine("                         Required only for SV6x66 fwrite; overwrites the complete 2 MiB flash");
+			Console.WriteLine("                         SV6x66 fwrite: recognized stock/OpenBeken factory target; restores the complete 2 MiB backup");
 			Console.WriteLine("  --sv6x66-restore-diagnostics  SV6X66 fwrite only: include internal result and phase timing records.");
             Console.WriteLine("  --no-stub              Use legacy (ROM-only) mode for ESP8266/ESP32 family chips (disable stub flasher)");
             Console.WriteLine();

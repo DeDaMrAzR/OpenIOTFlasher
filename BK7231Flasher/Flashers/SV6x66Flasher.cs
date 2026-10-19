@@ -147,6 +147,239 @@ namespace BK7231Flasher
 			Pending = false;
 		}
 	}
+	internal sealed class SvApplicationImage
+	{
+		internal const int MaximumCarrierBytes = 12 * 1024;
+		internal static bool HasEmbeddedLoaders
+		{
+			get
+			{
+				string[] resources = typeof(SvApplicationImage).Assembly.GetManifestResourceNames();
+				return resources.Count(name => name.EndsWith(".SV6x66_AppBankA_Carrier.bin", StringComparison.Ordinal)) == 1
+					&& resources.Count(name => name.EndsWith(".SV6x66_AppBankB_Carrier.bin", StringComparison.Ordinal)) == 1;
+			}
+		}
+		readonly byte[][] banks;
+		readonly byte[][] carriers;
+		internal readonly string SourcePath;
+		internal readonly string SourceSha256;
+		SvApplicationImage(string path, byte[] envelope, byte[][] bankImages, byte[][] bankCarriers)
+		{
+			SourcePath = path;
+			SourceSha256 = Digest(SHA256.Create(), envelope);
+			banks = bankImages;
+			carriers = bankCarriers;
+		}
+		internal static string Digest(HashAlgorithm algorithm, byte[] bytes)
+		{
+			using (algorithm) return string.Concat(algorithm.ComputeHash(bytes).Select(value => value.ToString("x2")));
+		}
+		static void RequireMagic(byte[] bytes, int offset, string magic)
+		{
+			if (!bytes.Skip(offset).Take(magic.Length).SequenceEqual(Encoding.ASCII.GetBytes(magic)))
+				throw new InvalidDataException("SV6x66 artifact identity marker is missing.");
+		}
+		static void RequireEntry(byte[] bytes)
+		{
+			if (bytes.Length < 4 || bytes[0] != 0x48 || bytes[1] != 0 || bytes[2] != 0 || bytes[3] != 2)
+				throw new InvalidDataException("SV6x66 artifact does not have the required raw bank entry.");
+		}
+		static void ValidateBank(byte[] raw, byte bank)
+		{
+			if (raw.Length < 68 || raw.Length > SvApplicationTransaction.BankLength)
+				throw new InvalidDataException("SV6x66 raw application length is outside its bank.");
+			RequireEntry(raw);
+			int record = raw.Length - 64;
+			RequireMagic(raw, record, "OBKSV6X1");
+			if (SvApplicationTransaction.Get32(raw, record + 8) != SvApplicationTransaction.AddressFor(bank)
+				|| SvApplicationTransaction.Get32(raw, record + 12) != SvApplicationTransaction.BankLength
+				|| SvApplicationTransaction.Get32(raw, record + 16) != raw.Length
+				|| SvApplicationTransaction.Get32(raw, record + 20) != 1
+				|| raw.Skip(record + 24).Any(value => value != 0))
+				throw new InvalidDataException("SV6x66 application bank link identity, size, or format is unsupported.");
+		}
+		internal static byte[] LoadCarrier(byte bank)
+		{
+			if (bank > 1) throw new ArgumentOutOfRangeException(nameof(bank));
+			string resource = bank == 0 ? "SV6x66_AppBankA_Carrier" : "SV6x66_AppBankB_Carrier";
+			byte[] carrier;
+			try { carrier = FLoaders.GetRawBinaryFromAssembly(resource); }
+			catch (InvalidOperationException exception)
+			{
+				throw new InvalidDataException("This flasher build is missing its SV6x66 loader. Use a complete OpenIOTFlasher build.", exception);
+			}
+			if (carrier.Length < 36 || carrier.Length > MaximumCarrierBytes)
+				throw new InvalidDataException("Embedded SV6x66 loader is outside its 12 KiB bound: " + resource);
+			int expectedLength = bank == 0 ? 8680 : 8548;
+			string expectedSha256 = bank == 0
+				? "0a81c14f07d73a23f4374b387902d3b332c7df45ce96070a9501b72464e20c33"
+				: "71d055df13d3d7a3d8538b7d8ae1923466b1ccef8b07b049befc8dac699ada89";
+			if (carrier.Length != expectedLength || Digest(SHA256.Create(), carrier) != expectedSha256)
+				throw new InvalidDataException("Embedded SV6x66 loader differs from the reviewed unified build: " + resource);
+			RequireEntry(carrier);
+			int record = carrier.Length - 32;
+			RequireMagic(carrier, record, "SV6CARR1");
+			byte[] body = carrier.Take(record).ToArray();
+			uint bodyCrc = CRC.crc32_ver2(0xFFFFFFFFu, body) ^ 0xFFFFFFFFu;
+			if (SvApplicationTransaction.Get32(carrier, record + 8) != bank
+				|| SvApplicationTransaction.Get32(carrier, record + 12) != SvApplicationTransaction.AddressFor(bank)
+				|| SvApplicationTransaction.Get32(carrier, record + 16) != carrier.Length
+				|| SvApplicationTransaction.Get32(carrier, record + 20) != bodyCrc
+				|| carrier.Skip(record + 24).Any(value => value != 0))
+				throw new InvalidDataException("Embedded SV6x66 loader bank/link/length/CRC identity is inconsistent: " + resource);
+			return carrier;
+		}
+		internal static bool IsApplicationFileName(string path)
+		{
+			if (string.IsNullOrEmpty(path)) return false;
+			string name = Path.GetFileName(path);
+			return !name.StartsWith("readResult_SV6X66_", StringComparison.OrdinalIgnoreCase)
+				&& !name.EndsWith(".bank.bin", StringComparison.OrdinalIgnoreCase)
+				&& (name.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)
+					|| name.EndsWith(".sv6ota", StringComparison.OrdinalIgnoreCase));
+		}
+		internal static SvApplicationImage Load(string path)
+		{
+			path = Path.GetFullPath(path ?? "");
+			FileInfo info = new FileInfo(path);
+			if (!IsApplicationFileName(path) || !info.Exists
+				|| info.Length < 84 + 136 || info.Length > 84 + 2 * SvApplicationTransaction.BankLength)
+				throw new InvalidDataException("Select an SV6x66 application bundle (.bin or .sv6ota); raw banks and full backups are different inputs.");
+			byte[] envelope = File.ReadAllBytes(path);
+			if (envelope.Length < 84 + 136 || envelope.Length > 84 + 2 * SvApplicationTransaction.BankLength)
+				throw new InvalidDataException("SV6x66 application package changed size while being read.");
+			if (SvApplicationTransaction.Get32(envelope, 0) != 0x73737600
+				|| SvApplicationTransaction.Get32(envelope, 12) != 1 || SvApplicationTransaction.Get32(envelope, 16) != 0)
+				throw new InvalidDataException("SV6x66 application envelope magic or version is unsupported.");
+			uint aLength = SvApplicationTransaction.Get32(envelope, 4);
+			uint bLength = SvApplicationTransaction.Get32(envelope, 8);
+			if (aLength < 68 || bLength < 68 || aLength > SvApplicationTransaction.BankLength
+				|| bLength > SvApplicationTransaction.BankLength || 84UL + aLength + bLength != (ulong)envelope.Length)
+				throw new InvalidDataException("SV6x66 application package has invalid lengths or trailing bytes.");
+			byte[][] banks = { new byte[(int)aLength], new byte[(int)bLength] };
+			Buffer.BlockCopy(envelope, 84, banks[0], 0, banks[0].Length);
+			Buffer.BlockCopy(envelope, 84 + banks[0].Length, banks[1], 0, banks[1].Length);
+			for (byte bank = 0; bank < 2; bank++)
+			{
+				ValidateBank(banks[bank], bank);
+				string expected = Encoding.ASCII.GetString(envelope, 20 + bank * 32, 32);
+				if (!string.Equals(expected, Digest(MD5.Create(), banks[bank]), StringComparison.Ordinal))
+					throw new InvalidDataException("SV6x66 raw application MD5 does not match the dual-bank envelope.");
+			}
+			return new SvApplicationImage(path, envelope, banks,
+				new[] { LoadCarrier(0), LoadCarrier(1) });
+		}
+		internal byte[] PaddedBank(byte bank)
+		{
+			if (bank > 1) throw new ArgumentOutOfRangeException(nameof(bank));
+			byte[] padded = Enumerable.Repeat((byte)0xFF, SvApplicationTransaction.BankLength).ToArray();
+			Buffer.BlockCopy(banks[bank], 0, padded, 0, banks[bank].Length);
+			return padded;
+		}
+		internal byte[] Carrier(byte bank)
+		{
+			if (bank > 1) throw new ArgumentOutOfRangeException(nameof(bank));
+			return (byte[])carriers[bank].Clone();
+		}
+		internal int RawLength(byte bank) => banks[bank].Length;
+	}
+	internal sealed class SvApplicationTransaction
+	{
+		internal const int BankLength = 0x9B000;
+		internal readonly byte TargetBank;
+		internal readonly byte RollbackBank;
+		internal readonly ulong Nonce;
+		internal readonly byte[] SourceSha;
+		internal readonly uint ExpectedCrc;
+		internal readonly int RawLength;
+		internal sealed class Result
+		{
+			internal byte State, Status;
+			internal uint ActualCrc, Selector, Programmed, Acknowledged, Erased, Flags;
+		}
+		internal SvApplicationTransaction(byte targetBank, byte rollbackBank, ulong nonce, byte[] sourceSha, uint expectedCrc, int rawLength)
+		{
+			if (targetBank > 1 || rollbackBank != 1 - targetBank || nonce == 0 || sourceSha == null || sourceSha.Length != 32
+				|| rawLength < 68 || rawLength > BankLength)
+				throw new ArgumentException("Invalid SV6x66 application transaction identity.");
+			TargetBank = targetBank;
+			RollbackBank = rollbackBank;
+			Nonce = nonce;
+			SourceSha = (byte[])sourceSha.Clone();
+			ExpectedCrc = expectedCrc;
+			RawLength = rawLength;
+		}
+		internal static uint Get32(byte[] data, int offset)
+		{
+			return (uint)(data[offset] | data[offset + 1] << 8 | data[offset + 2] << 16 | data[offset + 3] << 24);
+		}
+		internal static void Put32(byte[] data, int offset, uint value)
+		{
+			for (int index = 0; index < 4; index++) data[offset + index] = (byte)(value >> (8 * index));
+		}
+		internal static uint SelectorFor(byte bank) => bank == 0 ? uint.MaxValue : 0;
+		internal static int AddressFor(byte bank) => bank == 0 ? 0x00B000 : 0x0A6000;
+		internal byte[] Control(byte operation)
+		{
+			if (operation < 1 || operation > 4) throw new ArgumentOutOfRangeException(nameof(operation));
+			byte[] data = new byte[operation == 1 ? 53 : 9];
+			data[0] = operation;
+			for (int index = 0; index < 8; index++) data[1 + index] = (byte)(Nonce >> (8 * index));
+			if (operation == 1)
+			{
+				Buffer.BlockCopy(SourceSha, 0, data, 9, 32);
+				Put32(data, 41, ExpectedCrc);
+				Put32(data, 45, BankLength);
+				Put32(data, 49, (uint)RawLength);
+			}
+			return data;
+		}
+		internal static void ValidateIdle(byte[] data)
+		{
+			ValidateProfile(data);
+			if (data[1] != 0 || data[2] != 0 || data.Skip(8).Take(40).Any(value => value != 0)
+				|| Get32(data, 48) != BankLength || Get32(data, 52) != 0 || Get32(data, 56) != 0
+				|| Get32(data, 60) != SelectorFor(data[4]) || data.Skip(64).Any(value => value != 0))
+				throw new InvalidDataException("SV6x66 application loader is not idle with its original bank selected; no rebind or replay.");
+		}
+		static void ValidateProfile(byte[] data)
+		{
+			if (data == null || data.Length != 84 || data[0] != 1 || data[3] > 1
+				|| data[4] != 1 - data[3] || data[5] != 1 || data[6] != 0 || data[7] != 0)
+				throw new InvalidDataException("SV6x66 application loader profile or bank identity is unsupported.");
+		}
+		internal Result Parse(byte[] data)
+		{
+			ValidateProfile(data);
+			ulong nonce = 0;
+			for (int index = 0; index < 8; index++) nonce |= (ulong)data[8 + index] << (8 * index);
+			if (data[3] != TargetBank || data[4] != RollbackBank || nonce != Nonce
+				|| !data.Skip(16).Take(32).SequenceEqual(SourceSha) || Get32(data, 48) != BankLength
+				|| Get32(data, 52) != ExpectedCrc || Get32(data, 80) != RawLength || data[1] < 1 || data[1] > 4)
+				throw new InvalidDataException("SV6x66 application session, source, or fixed bank identity changed; no rebind or replay.");
+			Result result = new Result {
+				State = data[1], Status = data[2], ActualCrc = Get32(data, 56), Selector = Get32(data, 60),
+				Programmed = Get32(data, 64), Acknowledged = Get32(data, 68), Erased = Get32(data, 72), Flags = Get32(data, 76)
+			};
+			if (result.Programmed > BankLength || result.Programmed % 1024 != 0 || result.Acknowledged > result.Programmed
+				|| result.Acknowledged % 1024 != 0 || result.Programmed - result.Acknowledged > 1024
+				|| result.Erased > BankLength || result.Erased % 4096 != 0 || (result.Flags & ~3u) != 0
+				|| (result.Programmed != 0 && result.Erased != BankLength)
+				|| (result.State == 1 && (result.Status != 0 || result.Programmed != 0 || result.Acknowledged != 0
+					|| result.Erased != 0 || result.Flags != 0 || result.ActualCrc != 0 || result.Selector != SelectorFor(RollbackBank)))
+				|| ((result.Flags & 2) != 0 && (result.Programmed != BankLength || result.Acknowledged != BankLength
+					|| result.Erased != BankLength || result.ActualCrc != ExpectedCrc || result.Flags != 3))
+				|| (result.State == 4 && (result.Status != 0 || result.Flags != 3 || result.Selector != SelectorFor(TargetBank))))
+				throw new InvalidDataException("SV6x66 application completion counters or selector contradict the fixed-bank transaction.");
+			return result;
+		}
+		internal void RequireReceived(Result result)
+		{
+			if (result.State != 3 || result.Status != 0 || result.Flags != 3 || result.ActualCrc != ExpectedCrc
+				|| result.Selector != SelectorFor(RollbackBank))
+				throw new InvalidDataException("SV6x66 inactive image is not fully verified with the original bank selected; selector commit blocked.");
+		}
+	}
 	public sealed class SV6x66Flasher : BaseFlasher
 	{
 		const byte CMD_SYN = 0x00;
@@ -157,15 +390,12 @@ namespace BK7231Flasher
 		const byte CMD_CUSTOM_XMODEM_WRITE = 0x91;
 		const byte CMD_CUSTOM_XMODEM_READ = 0x92;
 		const byte CMD_RESTORE_TRANSACTION = 0x9D;
+		const byte CMD_APPLICATION_TRANSACTION = 0x9E;
 		const byte CMD_AVAILABLE_CMDS = 0xFF;
 		const int FactoryBaud = 9600;
-		const int StockOtaBaud = 2000000;
 		const int StubInitialBaud = 115200;
 		const int FlashBytes = 0x200000;
 		const int SectorBytes = 0x1000;
-		const int BankBOffset = 0x0A6000;
-		const int BankBEnd = 0x141000;
-		const int CarrierBytes = 6272;
 		const int OtaPayloadBytes = 508;
 		const int OtaTransmitDrainTimeoutMs = 1000;
 		const int StockOtaSetupExpectedMilliseconds = 18500;
@@ -174,7 +404,6 @@ namespace BK7231Flasher
 		const int RestoreAbortTransmitDrainTimeoutMs = 1000;
 		const int RestoreSyncResponseTimeoutMs = 2000;
 		const int RestoreAbortSyncRetryDelayMs = 100;
-		const string CarrierSha256 = "816ce91f884337615a2b9f357121cf6cc809f87a86851ff4a86cc6b1e7f90498";
 		MemoryStream readResult;
 		Stopwatch backupTimer;
 		Stopwatch restoreTimer;
@@ -193,8 +422,6 @@ namespace BK7231Flasher
 		public bool LastOperationSucceeded { get; private set; }
 		public bool RestoreDiagnosticsEnabled { get; set; }
 		public bool TechnicalLoggingEnabled { get; set; }
-		static readonly bool V3CarrierIntegrated = true;
-
 		sealed class RestorePhaseStatistics
 		{
 			internal int Count;
@@ -353,20 +580,6 @@ namespace BK7231Flasher
 			return string.Concat(hash.ComputeHash(data).Select(value => value.ToString("x2")));
 		}
 
-		static byte[] LoadValidatedCarrier()
-		{
-			if (!V3CarrierIntegrated)
-				throw new InvalidOperationException("SV6x66 v3 source-only candidate: matched v3 carrier has not been built, approved or integrated; refusing before serial access or Bank-B staging.");
-			byte[] carrier = FLoaders.GetRawBinaryFromAssembly("SV6x66_BankB_Carrier");
-			if (carrier.Length != CarrierBytes)
-				throw new InvalidDataException($"Embedded SV6x66 Bank-B carrier length is {carrier.Length}; expected {CarrierBytes}");
-			using (SHA256 sha = SHA256.Create()) {
-				if (HexDigest(sha, carrier) != CarrierSha256)
-					throw new InvalidDataException("Embedded SV6x66 Bank-B carrier SHA-256 mismatch");
-			}
-			return carrier;
-		}
-
 		static string FormatDiagnosticBytes(byte[] data)
 		{
 			StringBuilder text = new StringBuilder();
@@ -455,7 +668,6 @@ namespace BK7231Flasher
 			if (text.StartsWith("SV6x66 stub returned invalid baud diagnostics", StringComparison.Ordinal)) return "SV6x66 baud verification failed.";
 			if (text.StartsWith("SV6x66 stub returned an unexpected platform identity", StringComparison.Ordinal)) return "SV6x66 platform identity mismatch.";
 			if (text.StartsWith("SV6x66 stub returned an unexpected capability set", StringComparison.Ordinal)) return "SV6x66 loader capability mismatch.";
-			if (text.StartsWith("Stock OTA frame ", StringComparison.Ordinal)) return "Loader upload failed.";
 			foreach (string marker in new[] { "; final failure:", "; stack=", "; raw=", "; expected=", "; partial=", "; aggregate=" })
 			{
 				int at = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
@@ -482,9 +694,11 @@ namespace BK7231Flasher
 			else if (serialFailure)
 				WriteSvError("Serial I/O failed on " + serialName + ": " + BriefFailureMessage(exception));
 			else
-				WriteSvError((restoring ? "SV6x66 restore stopped: " : "SV6x66 backup stopped safely: ") + BriefFailureMessage(exception));
-			if (restoring && restoreTransportMustRemainOpen)
-				WriteSvWarning("Restore incomplete; the current region may be unverified.");
+				WriteSvError((restoring ? "SV6x66 restore stopped: " : "SV6x66 backup stopped: ") + BriefFailureMessage(exception));
+			if (!restoring)
+				WriteSvWarning("No backup file was saved. The inactive bank may have changed; preserve this log before resetting or retrying.");
+			if (restoring)
+				WriteSvWarning("Full recovery stopped before completion. Restoring chip functionality requires SPI recovery; do not retry through UART.");
 		}
 		void CheckCancelled()
 		{
@@ -608,146 +822,8 @@ namespace BK7231Flasher
 			return Encoding.ASCII.GetString(ReadUntil(new byte[] { 13, 10 }, timeoutMs, label));
 		}
 
-		void EnterFactory()
+		void ConfigureSharedXmodem()
 		{
-			serial.BaudRate = FactoryBaud;
-			serial.DiscardInBuffer();
-			logger.setState("Waiting for SV6x66 reset", Color.DarkOrange);
-			ReadUntil(Encoding.ASCII.GetBytes("factory?\r\n"), 60000, "factory prompt");
-			WriteText("factory!\r\n");
-			ReadUntil(Encoding.ASCII.GetBytes("factory mode\r\n"), 4000, "factory handshake");
-			addLogLine();
-			addLogLine("Synchronizing...");
-			WriteText("AT+VER\r\n");
-			ReadLine(2500, "AT+VER");
-		}
-
-		void SwitchToStockOtaBaud()
-		{
-			WriteText("AT+BAUD=" + StockOtaBaud + "\r\n");
-			ReadUntil(Encoding.ASCII.GetBytes("OK\r\n"), 2500, "AT+BAUD");
-			serial.BaudRate = StockOtaBaud;
-			serial.DiscardInBuffer();
-			Thread.Sleep(250);
-			WriteText("AT+VER\r\n");
-			ReadUntil(new byte[] { 13, 10 }, 2500,
-				"AT+VER after stock-OTA baud change");
-		}
-
-		static byte[] BuildOtaStream(byte[] loader)
-		{
-			byte[] header = new byte[0x54];
-			WriteLe32(header, 0, 0x73737600u);
-			WriteLe32(header, 8, (uint)loader.Length);
-			WriteLe32(header, 12, 1u);
-			using (MD5 md5 = MD5.Create()) {
-				Encoding.ASCII.GetBytes(HexDigest(md5, Array.Empty<byte>())).CopyTo(header, 20);
-			}
-			using (MD5 md5 = MD5.Create()) {
-				Encoding.ASCII.GetBytes(HexDigest(md5, loader)).CopyTo(header, 52);
-			}
-			byte[] stream = new byte[header.Length + loader.Length];
-			Buffer.BlockCopy(header, 0, stream, 0, header.Length);
-			Buffer.BlockCopy(loader, 0, stream, header.Length, loader.Length);
-			return stream;
-		}
-
-		void StageCarrier(byte[] carrier)
-		{
-			if (carrier.Length == 0 || carrier.Length > BankBEnd - BankBOffset ||
-				carrier[0] != 0x48 || carrier[1] != 0 || carrier[2] != 0 || carrier[3] != 0x02)
-				throw new InvalidDataException("Embedded SV6x66 Bank-B carrier failed its artifact gate");
-			byte[] stream = BuildOtaStream(carrier);
-			logger.setState("Staging SV6x66 Bank-B carrier", Color.DarkOrange);
-			logger.setProgress(0, StockOtaSetupExpectedMilliseconds);
-			WriteText("AT+UPGRADE_START\r\n");
-			ReadUntil(Encoding.ASCII.GetBytes("OK\r\n"), 35000, "AT+UPGRADE_START",
-				4096, StockOtaSetupExpectedMilliseconds);
-			addLogLine("Sending loader...");
-			logger.setProgress(0, stream.Length);
-			int sequence = 0;
-			for (int offset = 0; offset < stream.Length; offset += OtaPayloadBytes, sequence++) {
-				int length = Math.Min(OtaPayloadBytes, stream.Length - offset);
-				byte[] packet = new byte[4 + length];
-				packet[0] = 0x55;
-				packet[1] = 0xAA;
-				packet[2] = (byte)(sequence >> 8);
-				packet[3] = (byte)sequence;
-				Buffer.BlockCopy(stream, offset, packet, 4, length);
-				double writeMilliseconds = -1;
-				int initialBytesToWrite = -1;
-				int finalBytesToWrite = -1;
-				double drainMilliseconds = -1;
-				double firstAckReadMilliseconds = -1;
-				double totalAckReadMilliseconds = -1;
-				bool mismatchLogged = false;
-				try
-				{
-					Stopwatch writeTimer = Stopwatch.StartNew();
-					WriteAll(packet);
-					writeMilliseconds = writeTimer.Elapsed.TotalMilliseconds;
-					try
-					{
-						WaitForTransmitDrain(OtaTransmitDrainTimeoutMs,
-							out initialBytesToWrite, out finalBytesToWrite,
-							out drainMilliseconds, "stock OTA frame");
-					}
-					catch (OperationCanceledException)
-					{
-						throw;
-					}
-					catch
-					{
-						WriteSvWarning("Stock OTA state is no longer trusted after a transmit-drain failure. Reset the SV6x66 and start a fresh session; this candidate does not retry or resynchronize OTA frames.");
-						throw;
-					}
-					byte expectedCrc = Crc8(stream, offset, length);
-					byte[] expectedReply = new byte[] { 0x55, 0xAA, packet[2], packet[3], expectedCrc };
-					byte[] reply = ReadOtaAck(6000, out firstAckReadMilliseconds,
-						out totalAckReadMilliseconds);
-					if (!reply.SequenceEqual(expectedReply))
-					{
-						if (TechnicalLoggingEnabled)
-							WriteSvError($"Stock OTA ACK mismatch: frame={sequence}, offset=0x{offset:X}, payload={length}, CRC8=0x{expectedCrc:X2}, expected={FormatHexBytes(expectedReply)}, received={FormatHexBytes(reply)}, Write()={writeMilliseconds:F3} ms, TX queued initial={initialBytesToWrite}, TX drain={drainMilliseconds:F3} ms, TX queued final={finalBytesToWrite}, ACK first-read={firstAckReadMilliseconds:F3} ms, ACK total={totalAckReadMilliseconds:F3} ms.");
-						WriteSvWarning("Stock OTA state is no longer trusted after an ACK mismatch. Reset the SV6x66 and start a fresh session; this candidate does not retry or resynchronize OTA frames.");
-						mismatchLogged = true;
-						throw new IOException("OTA frame acknowledgement mismatch");
-					}
-				}
-				catch (OperationCanceledException)
-				{
-					throw;
-				}
-				catch (Exception exception)
-				{
-					if (TechnicalLoggingEnabled && !mismatchLogged)
-						WriteSvError($"Stock OTA frame failure detail: frame={sequence}, offset=0x{offset:X}, payload={length}, Write()={writeMilliseconds:F3} ms, TX queued initial={initialBytesToWrite}, TX drain={drainMilliseconds:F3} ms, TX queued final={finalBytesToWrite}, ACK first-read={firstAckReadMilliseconds:F3} ms, ACK total={totalAckReadMilliseconds:F3} ms, exception={FormatExceptionDetail(exception)}");
-					throw new IOException($"Stock OTA frame {sequence} at payload offset 0x{offset:X} failed: {exception.Message}", exception);
-				}
-				logger.setProgress(Math.Min(offset + length, stream.Length), stream.Length);
-			}
-			logger.setProgress(stream.Length, stream.Length);
-			string emptyMd5;
-			string imageMd5;
-			using (MD5 md5 = MD5.Create())
-				emptyMd5 = HexDigest(md5, Array.Empty<byte>());
-			using (MD5 md5 = MD5.Create())
-				imageMd5 = HexDigest(md5, carrier);
-			WriteText("AT+VERIFT=" + emptyMd5 + imageMd5 + "\r\n");
-			ReadUntil(Encoding.ASCII.GetBytes("OK\r\n"), 4000, "AT+VERIFT");
-			WriteText("AT+UPGRADE_END\r\n");
-			ReadUntil(Encoding.ASCII.GetBytes("OK\r\n"), 35000, "AT+UPGRADE_END");
-			serial.BaudRate = StubInitialBaud;
-		}
-
-		void StartSharedStub()
-		{
-			selectedBaudApplied = false;
-			byte[] carrier = LoadValidatedCarrier();
-			OpenPort();
-			EnterFactory();
-			SwitchToStockOtaBaud();
-			StageCarrier(carrier);
 			sharedStubXmodem = new XMODEM(serial, XMODEM.Variants.XModem1K, 0xFF) {
 				WorkerOwnedSenderCleanup = true,
 				BatchSenderPackets = true,
@@ -756,6 +832,342 @@ namespace BK7231Flasher
 				ReceiverRequireAcceptedDataBeforeEndOfFile = true,
 			};
 			xm = sharedStubXmodem;
+		}
+
+		byte[] ApplicationCommand(byte[] request, float timeoutSeconds = 3f)
+		{
+			return ExecuteStubCommand(CMD_APPLICATION_TRANSACTION, request, timeoutSeconds, 84);
+		}
+
+		byte[] ConnectApplicationLoader()
+		{
+			serial.BaudRate = StubInitialBaud;
+			SynchronizeStub("Synchronizing with bank-aware SV6x66 loader", null, 100, 2, 6);
+			ValidateStubIdentityAndCapabilities();
+			byte[] query = ApplicationCommand(new byte[] { 0 });
+			SvApplicationTransaction.ValidateIdle(query);
+			addSuccess("Loader ready." + Environment.NewLine);
+			byte[] flashId;
+			ValidateFlashIdentity(out flashId);
+			ConfigureSharedXmodem();
+			return query;
+		}
+
+		void StageBankAwareCarrier(byte[][] carriers, byte? targetBank)
+		{
+			addLogLine($"Staging the bank-aware loader at {StubInitialBaud} baud...");
+			addLogLine();
+			byte[] a = targetBank == 1 ? Array.Empty<byte>() : carriers[0];
+			byte[] b = targetBank == 0 ? Array.Empty<byte>() : carriers[1];
+			string aMd5 = SvApplicationImage.Digest(MD5.Create(), a);
+			string bMd5 = SvApplicationImage.Digest(MD5.Create(), b);
+			byte[] stream = new byte[84 + a.Length + b.Length];
+			WriteLe32(stream, 0, 0x73737600);
+			WriteLe32(stream, 4, (uint)a.Length);
+			WriteLe32(stream, 8, (uint)b.Length);
+			WriteLe32(stream, 12, 1);
+			Encoding.ASCII.GetBytes(aMd5 + bMd5).CopyTo(stream, 20);
+			Buffer.BlockCopy(a, 0, stream, 84, a.Length);
+			Buffer.BlockCopy(b, 0, stream, 84 + a.Length, b.Length);
+			logger.setState("Preparing SV6x66 loader", Color.DarkOrange);
+			logger.setProgress(0, StockOtaSetupExpectedMilliseconds);
+			WriteText("AT+UPGRADE_START\r\n");
+			ReadUntil(Encoding.ASCII.GetBytes("OK\r\n"), 35000, "bank-aware carrier staging start",
+				4096, StockOtaSetupExpectedMilliseconds);
+			addLogLine("Staging start accepted. Sending loader...");
+			logger.setState("Sending SV6x66 loader", Color.DarkOrange);
+			logger.setProgress(0, stream.Length);
+			for (int offset = 0, sequence = 0; offset < stream.Length; offset += OtaPayloadBytes, sequence++)
+			{
+				int length = Math.Min(OtaPayloadBytes, stream.Length - offset);
+				byte[] packet = new byte[4 + length];
+				packet[0] = 0x55;
+				packet[1] = 0xAA;
+				packet[2] = (byte)(sequence >> 8);
+				packet[3] = (byte)sequence;
+				Buffer.BlockCopy(stream, offset, packet, 4, length);
+				byte[] expectedReply = { 0x55, 0xAA, packet[2], packet[3], Crc8(stream, offset, length) };
+				byte[] reply = null;
+				double writeMilliseconds = -1, drainMilliseconds = -1;
+				double firstAckReadMilliseconds = -1, totalAckReadMilliseconds = -1;
+				int initialBytesToWrite = -1, finalBytesToWrite = -1;
+				try
+				{
+					Stopwatch writeTimer = Stopwatch.StartNew();
+					WriteAll(packet);
+					writeMilliseconds = writeTimer.Elapsed.TotalMilliseconds;
+					WaitForTransmitDrain(OtaTransmitDrainTimeoutMs, out initialBytesToWrite,
+						out finalBytesToWrite, out drainMilliseconds, "bank-aware carrier frame");
+					reply = ReadOtaAck(6000, out firstAckReadMilliseconds, out totalAckReadMilliseconds);
+					if (!reply.SequenceEqual(expectedReply))
+						throw new IOException("Bank-aware carrier frame acknowledgement mismatch; no frame replay or automatic restart.");
+				}
+				catch (OperationCanceledException) { throw; }
+				catch (Exception exception)
+				{
+					// Always retain protocol metadata on failure; no payload, replay or resynchronization.
+					WriteSvError($"Carrier frame failure: frame={sequence}, offset=0x{offset:X}, payload={length}, expected={FormatHexBytes(expectedReply)}, received={(reply == null ? "incomplete (see failure detail)" : FormatHexBytes(reply))}, Write()={writeMilliseconds:F3} ms, TX queued initial={initialBytesToWrite}, TX drain={drainMilliseconds:F3} ms, TX queued final={finalBytesToWrite}, ACK first-read={firstAckReadMilliseconds:F3} ms, ACK total={totalAckReadMilliseconds:F3} ms; {BriefFailureMessage(exception)}");
+					WriteSvWarning("Carrier verification and activation were not requested. Preserve the log; do not retry or reset until the staging outcome is reviewed.");
+					throw new IOException($"Carrier frame {sequence} at stream offset 0x{offset:X} failed: {exception.Message}", exception);
+				}
+				logger.setProgress(Math.Min(offset + length, stream.Length), stream.Length);
+			}
+			addLogLine("Loader transfer acknowledged. Verifying loader...");
+			logger.setState("Verifying SV6x66 loader", Color.DarkOrange);
+			WriteText("AT+VERIFT=" + aMd5 + bMd5 + "\r\n");
+			ReadUntil(Encoding.ASCII.GetBytes("OK\r\n"), 4000, "bank-aware carrier verification");
+			addLogLine("Loader verification accepted. Activating loader...");
+			logger.setState("Starting SV6x66 loader", Color.DarkOrange);
+			WriteText("AT+UPGRADE_END\r\n");
+			ReadUntil(Encoding.ASCII.GetBytes("OK\r\n"), 35000, "bank-aware carrier activation");
+			serial.BaudRate = StubInitialBaud;
+		}
+
+		byte[] PrepareBankAwareLoader(byte[][] carriers)
+		{
+			selectedBaudApplied = false;
+			OpenPort();
+			serial.BaudRate = StubInitialBaud;
+			bool directLoader = false;
+			try
+			{
+				StubResponseEnvelope sync = ExecuteStubCommandEnvelope(CMD_SYN, null, 0.5f, 0, true);
+				directLoader = sync.Status == 0;
+			}
+			catch (IOException) { }
+			if (directLoader)
+			{
+				addLogLine("Connecting to the running bank-aware loader...");
+				return ConnectApplicationLoader();
+			}
+			serial.BaudRate = FactoryBaud;
+			serial.DiscardInBuffer();
+			logger.setState("Reset SV6x66 to begin loader staging", Color.DarkOrange);
+			WriteSvWarning("Reset the SV6x66 to enter factory mode.");
+			ReadUntil(Encoding.ASCII.GetBytes("factory?\r\n"), 60000, "application factory prompt");
+			WriteText("factory!\r\n");
+			ReadUntil(Encoding.ASCII.GetBytes("factory mode\r\n"), 4000, "application factory handshake");
+			WriteText("AT+VER\r\n");
+			string version = ReadLine(2500, "application factory version");
+			byte? targetBank = null;
+			if (version == "FWSWES-SV04MATE-3.7.1\r\n")
+			{
+				addLogLine("Exact CKW04 stock profile identified; its receiver selects the inactive carrier from the dual-bank stream.");
+				WriteText("AT+BAUD=115200\r\n");
+				ReadUntil(Encoding.ASCII.GetBytes("OK\r\n"), 2500, "stock application staging baud");
+				serial.BaudRate = StubInitialBaud;
+				Thread.Sleep(250);
+				WriteText("AT+VER\r\n");
+				if (ReadLine(2500, "stock profile at 115200") != version)
+					throw new InvalidDataException("Stock 115200 compatibility or profile verification failed; staging blocked, no faster-rate fallback.");
+			}
+			else if (version == "OpenSV6X66/1 CKW04\r\n")
+			{
+				WriteText("AT+OBK_BANK?\r\n");
+				string identity = ReadLine(2500, "OBK running bank identity");
+				if (identity == "OBKSV6/1 CKW04 RUN=A SEL=FFFFFFFF BASE=0000B000 SIZE=0009B000 FLASH=00200000\r\n")
+					targetBank = 1;
+				else if (identity == "OBKSV6/1 CKW04 RUN=B SEL=00000000 BASE=000A6000 SIZE=0009B000 FLASH=00200000\r\n")
+					targetBank = 0;
+				else
+					throw new InvalidDataException("Unknown SV6x66 firmware, running bank, selector, or layout; no carrier staging was started.");
+				addLogLine($"Checking active bank: running Bank {(targetBank == 1 ? "A" : "B")}; inactive Bank {(targetBank == 0 ? "A" : "B")}.");
+				WriteText("AT+BAUD=115200\r\n");
+				ReadUntil(Encoding.ASCII.GetBytes("OK\r\n"), 2500, "OBK recovery baud");
+				serial.BaudRate = StubInitialBaud;
+				Thread.Sleep(250);
+				WriteText("AT+OBK_BANK?\r\n");
+				if (ReadLine(2500, "OBK bank identity after baud change") != identity)
+					throw new InvalidDataException("OBK bank identity changed before staging; no write was started.");
+			}
+			else
+				throw new InvalidDataException("Unknown SV6x66 factory firmware; no carrier staging was started.");
+			StageBankAwareCarrier(carriers, targetBank);
+			byte[] query = ConnectApplicationLoader();
+			if (targetBank.HasValue && query[3] != targetBank.Value)
+				throw new InvalidDataException("The running carrier differs from the queried inactive bank; further operations blocked.");
+			return query;
+		}
+
+		void PrepareFullRestoreLoader()
+		{
+			byte[][] carriers = { SvApplicationImage.LoadCarrier(0), SvApplicationImage.LoadCarrier(1) };
+			byte[] query = PrepareBankAwareLoader(carriers);
+			SetStubBaud(baudrate);
+			ValidateStubIdentityAndCapabilities();
+			byte[] confirmed = ApplicationCommand(new byte[] { 0 });
+			SvApplicationTransaction.ValidateIdle(confirmed);
+			if (!confirmed.SequenceEqual(query))
+				throw new InvalidDataException("SV6x66 loader bank/rollback identity changed before restore; no restore was started.");
+		}
+
+		SvApplicationTransaction.Result ApplicationStatus(SvApplicationTransaction transaction)
+		{
+			for (int attempt = 0; ; attempt++)
+			{
+				try { return transaction.Parse(ApplicationCommand(transaction.Control(3))); }
+				catch (IOException) when (attempt < 2) { RestoreReadOnlyCommandBarrier(); }
+			}
+		}
+
+		internal void doInstallApplication(SvApplicationImage image, bool backupFirst = false)
+		{
+			LastOperationSucceeded = false;
+			portOpenFailed = false;
+			bool selectorCommitAttempted = false;
+			Stopwatch installationTimer = null;
+			logger.setState("Starting SV6x66 firmware installation", Color.DarkOrange);
+			try
+			{
+				if (image == null) throw new ArgumentNullException(nameof(image));
+				if (backupFirst)
+				{
+					readResult?.Dispose();
+					readResult = null;
+					backupTimer?.Stop();
+					backupTimer = Stopwatch.StartNew();
+					logger.setState("Starting SV6x66 backup then firmware installation", Color.DarkOrange);
+				}
+				if (baudrate != 115200 && baudrate != 230400 && baudrate != 460800
+					&& baudrate != 921600 && baudrate != 1500000 && baudrate != 2000000)
+					throw new InvalidOperationException("Select a supported SV6x66 loader baud rate.");
+				installationTimer = Stopwatch.StartNew();
+				addLogLine("Source: " + Path.GetFileName(image.SourcePath) + ".");
+				WriteSvWarning("Inactive-bank installation preserves the original application, bootloader, calibration and filesystem.");
+				addLogLine("Connecting to " + serialName + "...");
+				addLogLine($"Establishing communication at {baudrate} baud...");
+				byte[] query = PrepareBankAwareLoader(new[] { image.Carrier(0), image.Carrier(1) });
+				byte targetBank = query[3];
+				byte rollbackBank = query[4];
+				SetStubBaud(baudrate);
+				if (backupFirst)
+				{
+					ValidateStubIdentityAndCapabilities();
+					CheckCancelled();
+					byte[] confirmed = ApplicationCommand(new byte[] { 0 });
+					SvApplicationTransaction.ValidateIdle(confirmed);
+					if (!confirmed.SequenceEqual(query))
+						throw new InvalidDataException("SV6x66 loader bank/rollback identity changed before backup; application writing blocked.");
+					addLogLine($"Read range: 0x000000-0x{FlashBytes - 1:X6} ({FlashBytes} bytes) at {baudrate} baud.");
+					logger.setState("Reading SV6x66 flash", Color.Green);
+					readResult = new MemoryStream(ReadXmodemFlash(targetBank, image.Carrier(targetBank), true), false);
+					CheckCancelled();
+					if (!saveReadResult(0))
+						throw new IOException("SV6x66 backup could not be saved; application writing blocked.");
+					CheckCancelled();
+					confirmed = ApplicationCommand(new byte[] { 0 });
+					SvApplicationTransaction.ValidateIdle(confirmed);
+					if (!confirmed.SequenceEqual(query))
+						throw new InvalidDataException("SV6x66 loader bank/rollback identity changed after backup; application writing blocked.");
+					CheckCancelled();
+					addSuccess("Backup saved. Continuing with firmware installation." + Environment.NewLine);
+				}
+				byte[] padded = image.PaddedBank(targetBank);
+				byte[] sourceSha;
+				using (SHA256 sha = SHA256.Create()) sourceSha = sha.ComputeHash(padded);
+				byte[] random = new byte[8];
+				using (RandomNumberGenerator generator = RandomNumberGenerator.Create()) generator.GetBytes(random);
+				ulong nonce = BitConverter.ToUInt64(random, 0);
+				SvApplicationTransaction transaction = new SvApplicationTransaction(targetBank, rollbackBank,
+					nonce == 0 ? 1UL : nonce, sourceSha, CalculateCrc(padded), image.RawLength(targetBank));
+				addLogLine($"Target: inactive Bank {(targetBank == 0 ? "A" : "B")}; original Bank {(rollbackBank == 0 ? "A" : "B")} remains selected.");
+				if (backupFirst) CheckCancelled();
+				SvApplicationTransaction.Result prepared = transaction.Parse(ApplicationCommand(transaction.Control(1)));
+				if (prepared.State != 1) throw new InvalidDataException("Application transaction was not prepared without destructive work.");
+				CheckCancelled();
+				restoreTransportMustRemainOpen = true;
+				deferRestoreCancellation = true;
+				int address = SvApplicationTransaction.AddressFor(targetBank);
+				logger.setState("Writing SV6x66 firmware", Color.DarkOrange);
+				addLogLine($"Write range: 0x{address:X6}-0x{address + padded.Length - 1:X6} ({padded.Length} bytes).");
+				logger.setProgress(0, padded.Length);
+				StubResponseEnvelope ready = ExecuteStubCommandEnvelope(CMD_APPLICATION_TRANSACTION,
+					transaction.Control(2), 35f, 0, false, false, true);
+				if (ready.Status != 0) throw new IOException("Inactive-bank START rejected; no automatic retry.");
+				int acknowledged = 0;
+				void PacketSent(int sentBytes, int total, int sequence, uint offset)
+				{
+					if (total != padded.Length || sentBytes < 0 || sentBytes > padded.Length || offset != address + sentBytes)
+						throw new InvalidDataException("SV6x66 application transfer accounting changed.");
+					acknowledged = sentBytes;
+					logger.setProgress(sentBytes, padded.Length);
+					logger.setLogProgress($"Writing: ({sentBytes * 100 / padded.Length,3}%) 0x{offset:X6}", Color.Black);
+				}
+				Exception transferFailure = null;
+				sharedStubXmodem.PacketSent += PacketSent;
+				try { sharedStubXmodem.Send(padded, (uint)address); }
+				catch (Exception exception) { transferFailure = exception; }
+				finally { sharedStubXmodem.PacketSent -= PacketSent; }
+				logger.setLogProgress($"Writing: ({acknowledged * 100 / padded.Length,3}%) 0x{address + acknowledged:X6}"
+					+ Environment.NewLine, transferFailure == null && acknowledged == padded.Length ? Color.Black : Color.Red);
+				if (transferFailure != null || sharedStubXmodem.TerminationReason != XMODEM.TerminationReasonEnum.EndOfFile)
+				{
+					serial.Write(new byte[] { 0x18, 0x18 }, 0, 2);
+					RestoreReadOnlyCommandBarrier();
+				}
+				addLogLine();
+				addLogLine("Verification...");
+				logger.setState("Verifying SV6x66 firmware", Color.DarkOrange);
+				SvApplicationTransaction.Result received = ApplicationStatus(transaction);
+				transaction.RequireReceived(received);
+				if (acknowledged != padded.Length || (transferFailure != null && !(transferFailure is IOException)))
+					throw new IOException("Application transfer was not fully acknowledged; original bank retained, no replay or selector commit.", transferFailure);
+				deferRestoreCancellation = false;
+				CheckCancelled();
+				if (finalReadbackVerification ?? true)
+				{
+					logger.setProgress(0, padded.Length);
+					byte[] readback = ReadXmodemRange(address, padded.Length, count => logger.setProgress(count, padded.Length));
+					if (!readback.SequenceEqual(padded)) throw new IOException("Inactive-bank final readback differs; original selector retained.");
+				}
+				addSuccess(((finalReadbackVerification ?? true) ? "CRC and final readback verification passed."
+					: "CRC verification passed.") + Environment.NewLine);
+				if (finalReadbackVerification == false)
+					addLogLine("Write final readback skipped.");
+				CheckCancelled();
+				xm = null;
+				deferRestoreCancellation = true;
+				addLogLine("Activating verified firmware...");
+				logger.setState("Verifying SV6x66 boot selector", Color.DarkOrange);
+				selectorCommitAttempted = true;
+				try { transaction.Parse(ApplicationCommand(transaction.Control(4), 5f)); }
+				catch (IOException) { RestoreReadOnlyCommandBarrier(); }
+				SvApplicationTransaction.Result committed = ApplicationStatus(transaction);
+				if (committed.State != 4 || committed.Status != 0 || committed.Flags != 3
+					|| committed.ActualCrc != transaction.ExpectedCrc || committed.Selector != SvApplicationTransaction.SelectorFor(targetBank))
+					throw new IOException("Selector commit outcome is unproven; no commit replay or automatic restart.");
+				LastOperationSucceeded = true;
+				logger.setState("SV6x66 firmware installation complete", Color.DarkGreen);
+				addSuccess("Boot selector verified." + Environment.NewLine);
+				addLogLine();
+				addSuccess("Firmware installation complete." + Environment.NewLine);
+				installationTimer.Stop();
+				addLogLine($"Completed in {installationTimer.Elapsed.TotalSeconds:F3} s.");
+				WriteSvWarning("Reset manually to activate new firmware.");
+			}
+			catch (OperationCanceledException)
+			{
+				logger.setState("SV6x66 application installation cancelled", Color.DarkOrange);
+				WriteSvWarning(selectorCommitAttempted ? "Cancellation arrived during selector commit; inspect retained outcome before reset."
+					: "Installation cancelled before selector commit. The inactive bank may be incomplete; reset returns to the original application when rollback was verified.");
+			}
+			catch (Exception exception)
+			{
+				logger.setState("SV6x66 application installation stopped", Color.Red);
+				WriteSvError("SV6x66 application installation stopped: " + BriefFailureMessage(exception));
+				WriteSvWarning(selectorCommitAttempted ? "Selector outcome may be indeterminate. Do not replay commit; external recovery may be required."
+					: "No application selector commit was requested. Carrier staging or rollback may still have changed the selector; preserve the log and use the documented recovery state.");
+			}
+			finally
+			{
+				installationTimer?.Stop();
+				if (backupFirst) backupTimer?.Stop();
+				deferRestoreCancellation = false;
+				restoreTransportMustRemainOpen = false;
+				xm = null;
+				sharedStubXmodem = null;
+				closePort();
+			}
 		}
 
 		static byte StubChecksum(byte[] data, int length)
@@ -1121,7 +1533,7 @@ namespace BK7231Flasher
 
 			byte[] expected = new byte[] { CMD_SYN, CMD_BAUD, CMD_CUSTOM_CHIP_INFO,
 				CMD_CUSTOM_CRC32, CMD_CUSTOM_FLASH_ID, CMD_CUSTOM_XMODEM_WRITE,
-				CMD_RESTORE_TRANSACTION, CMD_CUSTOM_XMODEM_READ, CMD_AVAILABLE_CMDS };
+				CMD_RESTORE_TRANSACTION, CMD_APPLICATION_TRANSACTION, CMD_CUSTOM_XMODEM_READ, CMD_AVAILABLE_CMDS };
 			byte[] capabilities = ExecuteStubCommand(CMD_AVAILABLE_CMDS, null, 2f,
 				expected.Length) ?? throw new IOException("SV6x66 stub capabilities command failed");
 			if (!capabilities.SequenceEqual(expected))
@@ -1142,40 +1554,10 @@ namespace BK7231Flasher
 			if (flashInfo == null || flashInfo.szMem != FlashBytes)
 				throw new IOException("Unsupported SV6x66 flash information/layout for JEDEC "
 					+ FormatHexBytes(flashId.Take(3).ToArray()));
+			addSuccess("Device identified: SV6x66." + Environment.NewLine);
+			addLogLine($"Detected flash: {flashInfo.manufacturer} {flashInfo.icName}, JEDEC ID {FormatHexBytes(flashId.Take(3).ToArray())}, {flashInfo.szMem / (1024 * 1024)} MiB.");
 			return flashInfo;
 		}
-
-		void ValidatePlatformGatesWithRecovery()
-		{
-			const int maximumAttempts = 3;
-			IOException lastError = null;
-			for (int attempt = 1; attempt <= maximumAttempts; attempt++) {
-				try
-				{
-					ValidateStubIdentityAndCapabilities();
-					byte[] flashId;
-					SPIFlashInfo flashInfo = ValidateFlashIdentity(out flashId);
-					addSuccess("Device identified: SV6x66." + Environment.NewLine);
-					addLogLine($"Detected flash: {flashInfo.manufacturer} {flashInfo.icName}, JEDEC ID {FormatHexBytes(flashId.Take(3).ToArray())}, {flashInfo.szMem / (1024 * 1024)} MiB.");
-					if (attempt > 1)
-						WriteSvWarning(TechnicalLoggingEnabled ? $"Identity/capability/JEDEC validation recovered on attempt {attempt}/{maximumAttempts}." : "Device validation recovered.");
-					return;
-				}
-				catch (IOException exception)
-				{
-					lastError = exception;
-					if (TechnicalLoggingEnabled)
-						WriteSvWarning($"Identity/capability/JEDEC validation failed on attempt {attempt}/{maximumAttempts}: {FormatExceptionDetail(exception)}");
-					if (attempt == maximumAttempts)
-						break;
-					SynchronizeStub("Recovering platform validation through selected-baud re-sync",
-						TechnicalLoggingEnabled ? "Platform validation transport re-synchronized with two consecutive clean command-0x00 responses." : null,
-						100, 2, 6);
-				}
-			}
-			throw new IOException($"SV6x66 identity/capability/JEDEC validation failed after {maximumAttempts} attempts", lastError);
-		}
-
 
 		void ValidateFullFlashCrc(int address, byte[] data)
 		{
@@ -1185,32 +1567,38 @@ namespace BK7231Flasher
 				throw new IOException($"Full-flash CRC32 mismatch: device {deviceCrc:X8}, host {hostCrc:X8}");
 		}
 
-		void SanitizeVerifiedBackupBankB(byte[] image)
+		void SanitizeVerifiedBackupBank(byte[] image, byte bank, byte[] carrier, bool bankAware)
 		{
 			if (image == null || image.Length != FlashBytes)
-				throw new InvalidDataException("SV6x66 Bank-B sanitization requires an exact 2 MiB raw image");
-			byte[] carrier = LoadValidatedCarrier();
-			int carrierEnd = BankBOffset + carrier.Length;
-			if (carrierEnd > BankBEnd || BankBEnd > image.Length)
-				throw new InvalidDataException("SV6x66 Bank-B sanitization boundaries are invalid");
+				throw new InvalidDataException("SV6x66 backup sanitization requires an exact 2 MiB raw image");
+			if (bank > 1 || carrier == null || carrier.Length < 36 || carrier.Length > SvApplicationImage.MaximumCarrierBytes)
+				throw new InvalidDataException("SV6x66 backup carrier identity is invalid");
+			int bankStart = SvApplicationTransaction.AddressFor(bank);
+			int bankEnd = bankStart + SvApplicationTransaction.BankLength;
+			int carrierEnd = bankStart + carrier.Length;
+			if (carrierEnd > bankEnd || bankEnd > image.Length)
+				throw new InvalidDataException("SV6x66 backup bank sanitization boundaries are invalid");
+			if (bankAware && ReadLe32(image, 0x4000) != SvApplicationTransaction.SelectorFor((byte)(1 - bank)))
+				throw new InvalidDataException("SV6x66 backup does not retain the original application's selector; refusing to sanitize or save");
 
 			for (int offset = 0; offset < carrier.Length; offset++)
 			{
 				if ((offset & 0xFFFF) == 0)
 					CheckCancelled();
-				if (image[BankBOffset + offset] != carrier[offset])
-					throw new InvalidDataException($"SV6x66 Bank-B carrier mismatch at flash offset 0x{BankBOffset + offset:X6}; refusing to sanitize or save");
+				if (image[bankStart + offset] != carrier[offset])
+					throw new InvalidDataException($"SV6x66 carrier mismatch at flash offset 0x{bankStart + offset:X6}; refusing to sanitize or save");
 			}
-			for (int offset = carrierEnd; offset < BankBEnd; offset++)
+			for (int offset = carrierEnd; offset < bankEnd; offset++)
 			{
 				if ((offset & 0xFFFF) == 0)
 					CheckCancelled();
 				if (image[offset] != 0xFF)
-					throw new InvalidDataException($"SV6x66 Bank-B padding is not erased at flash offset 0x{offset:X6}; refusing to sanitize or save");
+					throw new InvalidDataException($"SV6x66 inactive-bank padding is not erased at flash offset 0x{offset:X6}; refusing to sanitize or save");
 			}
 			CheckCancelled();
-			for (int offset = BankBOffset; offset < carrierEnd; offset++)
+			for (int offset = bankStart; offset < carrierEnd; offset++)
 				image[offset] = 0xFF;
+			addLogLine($"Backup normalized: staged Bank {(bank == 0 ? "A" : "B")} is erased in the saved copy; its previous contents are not preserved!!");
 		}
 
 		static uint CalculateCrc(byte[] data)
@@ -1369,8 +1757,8 @@ namespace BK7231Flasher
 			Tuple<string, int, int>[] semanticSchedule = {
 				Tuple.Create("Filesystem/tail", 0x141000, 0x200000),
 				Tuple.Create("Bank B", 0x0A6000, 0x141000),
-				Tuple.Create("Active Bank-A body", 0x00C000, 0x0A6000),
-				Tuple.Create("Active Bank-A entry", 0x00B000, 0x00C000),
+				Tuple.Create("Bank-A body", 0x00C000, 0x0A6000),
+				Tuple.Create("Bank-A entry", 0x00B000, 0x00C000),
 				Tuple.Create("OTA/runtime metadata", 0x005000, 0x00B000),
 				Tuple.Create("Bootloader body", 0x001000, 0x004000),
 				Tuple.Create("Reset vector", 0x000000, 0x001000),
@@ -1405,7 +1793,7 @@ namespace BK7231Flasher
 			}
 		}
 
-		byte[] ReadXmodemFlash()
+		byte[] ReadXmodemFlash(byte carrierBank, byte[] carrier, bool bankAware)
 		{
 			int received = 0;
 			int lastDisplayedPercent = 0;
@@ -1481,7 +1869,7 @@ namespace BK7231Flasher
 				if (!finalReadback.SequenceEqual(image))
 					throw new IOException("Final backup readback does not match the initial raw flash image.");
 			}
-			SanitizeVerifiedBackupBankB(image);
+			SanitizeVerifiedBackupBank(image, carrierBank, carrier, bankAware);
 			addSuccess((finalReadbackVerification.HasValue ? "CRC verification passed." : "Verification passed.") + Environment.NewLine);
 			if (finalReadbackVerification.HasValue)
 				addLogLine(finalReadbackVerification.Value ? "Backup final readback passed." : "Backup final readback skipped.");
@@ -1489,25 +1877,20 @@ namespace BK7231Flasher
 			return image;
 		}
 
-		void PrepareSharedStub()
-		{
-			addLogLine("Staging the loader...");
-			WriteSvWarning("Connect RST/RESET/CEN pad to GND");
-			StartSharedStub();
-			const int initialSyncAttempts = 5;
-			int syncAttempts = SynchronizeStub("Synchronizing with shared stub", null, 50,
-				1, initialSyncAttempts, true, true);
-			logger.setProgress(syncAttempts, syncAttempts);
-			addSuccess("Loader ready." + Environment.NewLine);
-			SetStubBaud(baudrate);
-			ValidatePlatformGatesWithRecovery();
-		}
-
 		byte[] ReadFullFlash()
 		{
-			PrepareSharedStub();
+			byte[][] carriers = { SvApplicationImage.LoadCarrier(0), SvApplicationImage.LoadCarrier(1) };
+			byte[] query = PrepareBankAwareLoader(carriers);
+			SetStubBaud(baudrate);
+			ValidateStubIdentityAndCapabilities();
+			byte[] confirmed = ApplicationCommand(new byte[] { 0 });
+			SvApplicationTransaction.ValidateIdle(confirmed);
+			if (!confirmed.SequenceEqual(query))
+				throw new InvalidDataException("SV6x66 loader bank/rollback identity changed before backup; no read was started.");
+			byte carrierBank = query[3];
+			addLogLine($"Read range: 0x000000-0x{FlashBytes - 1:X6} ({FlashBytes} bytes) at {baudrate} baud.");
 			logger.setState("Reading SV6x66 flash", Color.Green);
-			return ReadXmodemFlash();
+			return ReadXmodemFlash(carrierBank, carriers[carrierBank], true);
 		}
 
 		public override void doRead(int startSector = 0, int sectors = 10, bool fullRead = false)
@@ -1529,9 +1912,8 @@ namespace BK7231Flasher
 				if (baudrate <= 0)
 					throw new InvalidOperationException("Select a valid baud rate for SV6x66 backup.");
 				backupTimer = Stopwatch.StartNew();
-				WriteSvWarning("Warning: Creating an SV6x66 backup erases and replaces inactive Bank B.");
 				addLogLine("Connecting to " + serialName + "...");
-				addLogLine($"Establishing communication at {baudrate} baud...");
+				addLogLine($"Loader staging uses {StubInitialBaud} baud; flash reading uses the selected {baudrate} baud.");
 				readResult = new MemoryStream(ReadFullFlash(), false);
 				LastOperationSucceeded = true;
 				logger.setState("SV6x66 read complete", Color.DarkGreen);
@@ -1590,7 +1972,7 @@ namespace BK7231Flasher
 				addLogLine("Connecting to " + serialName + "...");
 				addLogLine($"Establishing communication at {baudrate} baud...");
 				MeasureRestorePhase("loader_staging", () => {
-					PrepareSharedStub();
+					PrepareFullRestoreLoader();
 					return 0;
 				});
 				restoreTransportMustRemainOpen = true;
@@ -1653,7 +2035,7 @@ namespace BK7231Flasher
 				restoreTimer?.Stop();
 				FinalizeRestoreProgress(Color.DarkOrange);
 				logger.setState("SV6x66 restore cancelled", Color.Yellow);
-				WriteSvWarning("SV6x66 restore cancelled. The target flash may be incomplete; recover it with a complete validated restore.");
+				WriteSvWarning("SV6x66 full recovery cancelled. Restoring chip functionality requires SPI recovery; do not retry through UART.");
 			}
 			catch (Exception exception)
 			{

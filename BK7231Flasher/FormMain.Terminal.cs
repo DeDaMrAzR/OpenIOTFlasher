@@ -33,6 +33,10 @@ namespace BK7231Flasher
 		{
 			comboBoxTerminalLineEnding.SelectedIndex = 1;
 			ConfigureLogContextMenu(textBoxTerminalLog);
+			checkBoxTerminalAutoScroll.CheckedChanged += (sender, e) => {
+				if (checkBoxTerminalAutoScroll.Checked)
+					RichTextUtil.ScrollToBottom(textBoxTerminalLog);
+			};
 		}
 
 		private void ComboBoxTerminalPort_SelectionChangeCommitted(object sender, EventArgs e)

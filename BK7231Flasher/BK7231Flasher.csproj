@@ -247,7 +247,8 @@
     <EmbeddedResource Include="Floaders\RTL8721DA_Stub.bin" />
     <EmbeddedResource Include="Floaders\RTL8720E_Stub.bin" />
     <EmbeddedResource Include="Floaders\RDA5981_Stub.bin" />
-	  <EmbeddedResource Include="Floaders\SV6x66_BankB_Carrier.bin" />
+	<EmbeddedResource Include="Floaders\SV6x66_AppBankA_Carrier.bin" Condition="Exists('Floaders\SV6x66_AppBankA_Carrier.bin') And Exists('Floaders\SV6x66_AppBankB_Carrier.bin')" />
+	<EmbeddedResource Include="Floaders\SV6x66_AppBankB_Carrier.bin" Condition="Exists('Floaders\SV6x66_AppBankA_Carrier.bin') And Exists('Floaders\SV6x66_AppBankB_Carrier.bin')" />
     <EmbeddedResource Include="Floaders\RTL8710B_Stub.bin" />
     <EmbeddedResource Include="Floaders\OPL1000A2_Stub.bin" />
     <EmbeddedResource Include="Floaders\OPL1000A2_Stub_stage1.bin" />
@@ -272,6 +273,10 @@
     <Content Include="bk_icon.ico" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+	<Target Name="RequireSV6x66ApplicationLoaders" BeforeTargets="PrepareForBuild" Condition="'$(RequireSV6x66ApplicationLoaders)' == 'true'">
+		<Error Condition="!Exists('$(MSBuildProjectDirectory)\Floaders\SV6x66_AppBankA_Carrier.bin') Or !Exists('$(MSBuildProjectDirectory)\Floaders\SV6x66_AppBankB_Carrier.bin')"
+			Text="SV6x66 unified loaders are missing. Build and review bkflasher_stub's bank-aware-carriers target, then import its bankA/SV6X66_BankA_Carrier.bin and bankB/SV6X66_BankB_Carrier.bin as Floaders/SV6x66_AppBankA_Carrier.bin and Floaders/SV6x66_AppBankB_Carrier.bin. Use the reviewed unified pair; do not substitute restore-only or legacy carriers." />
+	</Target>
   <Target Name="BeforeBuild">
     <ItemGroup>
       <AssemblyAttributes Include="BK7231Flasher.BuildVersion">

@@ -55,7 +55,7 @@ namespace BK7231Flasher
 				"- Adapter GND -> target GND" + System.Environment.NewLine +
 				"- Reset the target manually when prompted" + System.Environment.NewLine +
 				GetPowerAndGroundInstructions() + System.Environment.NewLine +
-				"This profile requires stock FWSWES-SV04MATE-3.7.1. The flasher starts at 9600 baud and switches the same UART to 2 Mbaud. RTS is not used. Reading necessarily erases and replaces inactive Bank B, so the resulting 2 MiB BIN is not a pristine pre-staging Bank-B image.";
+				"Backup and full restore support targets running stock FWSWES-SV04MATE-3.7.1 or the recognized CKW04 OpenBeken factory profile. Application installation accepts validated dual-bank OpenBeken bundles (.bin or .sv6ota). Factory entry uses 9600 baud, loader staging uses 115200, and flash operations use the selected rate. Stock firmware selects the inactive bank; OpenBeken reports its running bank so the flasher can stage the opposite bank. The loader handoff is validated. RTS is not used by the GUI. Creating a backup replaces the inactive bank; the saved 2 MiB image is normalized and cannot preserve that bank's previous contents. Full restore writes the complete backup unchanged, including its saved boot selector last. If this procedure is stopped before completion, restoring chip functionality will require SPI recovery!";
 		}
 
         static string GetBekenUart1Instructions(string platformName)
