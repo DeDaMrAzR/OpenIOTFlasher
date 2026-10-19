@@ -20,9 +20,10 @@ namespace BK7231Flasher
 
         }
 
-        static int ParseStringToInt(string input)
+        static int ParseStringToInt(string input, out bool hexadecimal)
         {
-            if (input.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            hexadecimal = input.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+            if (hexadecimal)
             {
                 input = input.Substring(2);
                 return int.Parse(input, NumberStyles.HexNumber);
@@ -36,27 +37,31 @@ namespace BK7231Flasher
         int len = 0;
         bool checkRound()
         {
+            bool ofsHexadecimal;
+            bool lenHexadecimal;
             try
             {
-                ofs = ParseStringToInt(textBoxCh0.Text);
-                len = ParseStringToInt(textBoxCh1.Text);
+                ofs = ParseStringToInt(textBoxCh0.Text, out ofsHexadecimal);
+                len = ParseStringToInt(textBoxCh1.Text, out lenHexadecimal);
+                if (ofs < 0 || len < 0)
+                    throw new ArgumentOutOfRangeException("ofs/len", "Offsets and lengths cannot be negative.");
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                MessageBox.Show("Please enter correct len/ofs");
+                MessageBox.Show("Please enter valid non-negative len/ofs values within the supported range.");
                 return true;
             }
             bool bChanged = false;
             if((ofs % BK7231Flasher.SECTOR_SIZE) != 0)
             {
-                textBoxCh0.Text =
-                   ((ofs / BK7231Flasher.SECTOR_SIZE) * BK7231Flasher.SECTOR_SIZE).ToString("X2");
+                var roundedOfs = (ofs / BK7231Flasher.SECTOR_SIZE) * BK7231Flasher.SECTOR_SIZE;
+                textBoxCh0.Text = ofsHexadecimal ? "0x" + roundedOfs.ToString("X") : roundedOfs.ToString();
                 bChanged = true;
             }
             if ((len % BK7231Flasher.SECTOR_SIZE) != 0)
             {
-                textBoxCh1.Text =
-                   ((len / BK7231Flasher.SECTOR_SIZE) * BK7231Flasher.SECTOR_SIZE).ToString("X2");
+                var roundedLen = (len / BK7231Flasher.SECTOR_SIZE) * BK7231Flasher.SECTOR_SIZE;
+                textBoxCh1.Text = lenHexadecimal ? "0x" + roundedLen.ToString("X") : roundedLen.ToString();
                 bChanged = true;
             }
             if (bChanged)
