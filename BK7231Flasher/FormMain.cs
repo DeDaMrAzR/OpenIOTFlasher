@@ -94,7 +94,7 @@ namespace BK7231Flasher
 			ConfigurePortDisplay(comboBoxReadRomUART);
 			ConfigurePortDisplay(comboBoxTerminalPort);
             var version = Assembly.GetExecutingAssembly().GetCustomAttribute<BuildVersion>().Value;
-            Text = $"OpenIOT flasher {(string.IsNullOrWhiteSpace(version) ? "local" : version)}";
+            Text = $"OpenIOTFlasher {(string.IsNullOrWhiteSpace(version) ? "(local build)" : version)}";
         }
 
         void ConfigureLogContextMenu(RichTextBox logTextBox)
