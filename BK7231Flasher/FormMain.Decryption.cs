@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Globalization;
 using System.Windows.Forms;
 
 namespace BK7231Flasher
@@ -67,11 +68,50 @@ namespace BK7231Flasher
 				AddDecryptionLogLine($"Firmware is not selected", Color.Red);
 				return null;
 			}
-			var bytes = File.ReadAllBytes(lblFirmware.Text);
-			maxLength = (maxLength == 0 ? bytes.Length : maxLength) - startAddr;
-			var data = new byte[bytes.Length - startAddr > maxLength ? maxLength : bytes.Length - startAddr];
+			if(startAddr < 0 || maxLength < 0 || (maxLength != 0 && maxLength <= startAddr))
+			{
+				AddDecryptionLogLine("Invalid firmware file range.", Color.Red);
+				return null;
+			}
+			byte[] bytes;
+			try
+			{
+				bytes = File.ReadAllBytes(lblFirmware.Text);
+			}
+			catch(Exception ex)
+			{
+				AddDecryptionLogLine($"Could not read firmware file: {ex.Message}", Color.Red);
+				return null;
+			}
+			if(startAddr > bytes.Length)
+			{
+				AddDecryptionLogLine($"Firmware file is too short for offset 0x{startAddr:X}.", Color.Red);
+				return null;
+			}
+			int available = bytes.Length - startAddr;
+			int requested = maxLength == 0 ? available : maxLength - startAddr;
+			int length = Math.Min(available, requested);
+			var data = new byte[length];
 			Array.Copy(bytes, startAddr, data, 0, data.Length);
 			return skipCrc ? data : Utils.UnCRC(data);
+		}
+
+		private bool TryGetDecryptionKeys(out uint[] keys)
+		{
+			keys = new uint[4];
+			var controls = new[] { numCoeff1, numCoeff2, numCoeff3, numCoeff4 };
+			for(int i = 0; i < controls.Length; ++i)
+			{
+				string value = controls[i].Text;
+				if(string.IsNullOrWhiteSpace(value) || value.Length > 8 ||
+					!uint.TryParse(value, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out keys[i]))
+				{
+					MessageBox.Show($"Coefficient {i + 1} must contain 1 to 8 hexadecimal digits.");
+					keys = null;
+					return false;
+				}
+			}
+			return true;
 		}
 
 		private void OnBtnDecryptClick(object sender, EventArgs e)
@@ -198,6 +238,7 @@ namespace BK7231Flasher
 
 		private void OnBtnDecryptBootloaderClick(object sender, EventArgs e)
 		{
+			if(!TryGetDecryptionKeys(out var keys)) return;
 			var decrc = LoadFirmware(0, 0x10000, chkSkipDecrc.Checked);
 			if(!CheckDecrcLength(decrc, 27168))
 			{
@@ -206,7 +247,6 @@ namespace BK7231Flasher
 			_ = ParsePartitions(decrc, true, out var toRemove);
 			var final = new byte[decrc.Length - toRemove];
 			Array.Copy(decrc, final, final.Length);
-			var keys = new uint[] { Convert.ToUInt32(numCoeff1.Text, 16), Convert.ToUInt32(numCoeff2.Text, 16), Convert.ToUInt32(numCoeff3.Text, 16), Convert.ToUInt32(numCoeff4.Text, 16) };
 			var decr = Utils.EncryptDecryptBekenFW(keys, final, 0);
 			var name = lblFirmware.Text + ".bootloader.decr.bin";
 			File.WriteAllBytes(name, decr);
@@ -216,12 +256,12 @@ namespace BK7231Flasher
 
 		private void OnBtnDecryptFirmwareClick(object sender, EventArgs e)
 		{
+			if(!TryGetDecryptionKeys(out var keys)) return;
 			var decrc = LoadFirmware(0x11000, 0, chkSkipDecrc.Checked);
 			if(!CheckDecrcLength(decrc, 27168))
 			{
 				return;
 			}
-			var keys = new uint[] { Convert.ToUInt32(numCoeff1.Text, 16), Convert.ToUInt32(numCoeff2.Text, 16), Convert.ToUInt32(numCoeff3.Text, 16), Convert.ToUInt32(numCoeff4.Text, 16) };
 			var decr = Utils.EncryptDecryptBekenFW(keys, decrc, 0x10000);
 			var name = lblFirmware.Text + ".fw.decr.bin";
 			File.WriteAllBytes(name, decr);
@@ -231,8 +271,8 @@ namespace BK7231Flasher
 
 		private void OnBtnEncryptBootloaderClick(object sender, EventArgs e)
 		{
+			if(!TryGetDecryptionKeys(out var keys)) return;
 			var bootloader = FLoaders.GetBinaryFromAssembly("BK7231N_1_0_1");
-			var keys = new uint[] { Convert.ToUInt32(numCoeff1.Text, 16), Convert.ToUInt32(numCoeff2.Text, 16), Convert.ToUInt32(numCoeff3.Text, 16), Convert.ToUInt32(numCoeff4.Text, 16) };
 			for(int i = 0x48, k = 0; i < 0x57; i += 4, k++)
 			{
 				Array.Copy(Utils.U32ToU8(new uint[] { keys[k] }), 0, bootloader, i, 4);
@@ -257,9 +297,9 @@ namespace BK7231Flasher
 
 		private void OnBtnEncryptBKNBootloaderClick(object sender, EventArgs e)
 		{
+			if(!TryGetDecryptionKeys(out var keys)) return;
 			// uascent bootloader, common versions don't encrypt OTA
 			var bootloader = FLoaders.GetBinaryFromAssembly("BK7231N_1_0_13");
-			var keys = new uint[] { Convert.ToUInt32(numCoeff1.Text, 16), Convert.ToUInt32(numCoeff2.Text, 16), Convert.ToUInt32(numCoeff3.Text, 16), Convert.ToUInt32(numCoeff4.Text, 16) };
 			for(int i = 0x1F08, k = 0; i < 0x1F17; i += 4, k++)
 			{
 				Array.Copy(Utils.U32ToU8(new uint[] { keys[k] }), 0, bootloader, i, 4);
@@ -284,11 +324,11 @@ namespace BK7231Flasher
 
 		private void OnBtnEncryptFirmwareClick(object sender, EventArgs e)
 		{
+			if(!TryGetDecryptionKeys(out var keys)) return;
 			var fileName = OpenFile(out var safeFileName);
 			if(fileName == null) return;
 			var data = File.ReadAllBytes(fileName);
 			var uintdata = Utils.U8ToU32(data);
-			var keys = new uint[] { Convert.ToUInt32(numCoeff1.Text, 16), Convert.ToUInt32(numCoeff2.Text, 16), Convert.ToUInt32(numCoeff3.Text, 16), Convert.ToUInt32(numCoeff4.Text, 16) };
 			var encr = Utils.EncryptDecryptBekenFW(keys, uintdata, 0x10000);
 			var crc = Utils.CRCBeken(encr);
 			var name = $"firmwares/{safeFileName}_{keys[0]:X}_{keys[1]:X}_{keys[2]:X}_{keys[3]:X}.0x11000.bin";
