@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Windows.Forms;
+using System.Threading;
 
 namespace BK7231Flasher
 {
@@ -100,6 +101,118 @@ namespace BK7231Flasher
             }
         }
 
+		CancellationTokenSource scannerOtaCancellation;
+		readonly Dictionary<Control, bool> scannerOtaEnabledStates = new Dictionary<Control, bool>();
+
+		bool postScannerOta(Action action)
+		{
+			if (IsDisposed || Disposing || !IsHandleCreated) return false;
+			try
+			{
+				BeginInvoke((MethodInvoker)delegate
+				{
+					if (!IsDisposed && !Disposing) action();
+				});
+				return true;
+			}
+			catch (InvalidOperationException) { return false; }
+		}
+
+		void startScannerOta(OBKDeviceAPI device)
+		{
+			if (scannerOtaCancellation != null || scan != null || worker != null
+				|| !buttonStartMassBackup.Enabled || terminalFlasherTasks.Exists(task => !task.IsCompleted))
+			{
+				MessageBox.Show("Finish the current scan, backup or operation before starting OTA.");
+				return;
+			}
+			string chipset = device.getChipSet();
+			string filter = OBKOtaImage.FileFilter(chipset);
+			if (device.isTasmota() || filter == null) return;
+			if (MessageBox.Show(this,
+				"Upload OTA to " + device.getAdr() + " (" + chipset + ")?\n\n"
+				+ "Choose the correct OTA image for this device. Check that the variant and flash size match.",
+				"OTA image", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+			OBKOtaImage image;
+			using (var dialog = new OpenFileDialog())
+			{
+				dialog.Filter = filter;
+				dialog.Title = "Choose OTA firmware to upload to " + device.getAdr() + " (" + chipset + ")";
+				if (dialog.ShowDialog(this) != DialogResult.OK) return;
+				try { image = OBKOtaImage.Load(dialog.FileName, chipset); }
+				catch (Exception ex)
+				{
+					MessageBox.Show(this, ex.Message, "OTA package", MessageBoxButtons.OK, MessageBoxIcon.Error);
+					return;
+				}
+			}
+			string mac = device.getMAC();
+			device.setUser(textBoxIPScannerUser.Text);
+			device.setPassword(textBoxIPScannerPass.Text);
+			var cancellation = new CancellationTokenSource();
+			scannerOtaCancellation = cancellation;
+			string oldButtonText = buttonStartScan.Text;
+			bool oldAllowDrop = AllowDrop;
+			scannerOtaEnabledStates.Clear();
+			foreach (Control control in getDescendantControls(this))
+			{
+				if (!isUserInteractiveControl(control)) continue;
+				scannerOtaEnabledStates[control] = control.Enabled;
+				control.Enabled = false;
+			}
+			AllowDrop = false;
+			buttonStartScan.Text = "Cancel OTA";
+			buttonStartScan.Enabled = true;
+			scannerDeviceMenu?.Close();
+			labelScanState.Text = "OTA: Checking device identity...";
+			ThreadPool.QueueUserWorkItem(_ =>
+			{
+				string result = "OTA: Device did not return a completion acknowledgement.";
+				try
+				{
+					device.UploadOta(image, chipset, mac, cancellation.Token,
+						(done, total) => postScannerOta(() =>
+						{
+							if (scannerOtaCancellation == cancellation)
+								labelScanState.Text = "OTA: Sent " + done + "/" + total + " bytes ("
+									+ (100L * done / total) + "%)."
+									+ (done == total ? " Awaiting device acknowledgement." : "");
+						}),
+						text =>
+						{
+							result = "OTA: " + text;
+							postScannerOta(() =>
+							{
+								if (scannerOtaCancellation == cancellation) labelScanState.Text = "OTA: " + text;
+							});
+						});
+				}
+				catch (OperationCanceledException)
+				{
+					result = "OTA canceled. Device state may be uncertain; no retry or further reboot was requested.";
+				}
+				catch (Exception ex)
+				{
+					result = "OTA: " + ex.Message;
+				}
+				finally
+				{
+					if (!postScannerOta(() =>
+					{
+						if (scannerOtaCancellation != cancellation) return;
+						foreach (KeyValuePair<Control, bool> state in scannerOtaEnabledStates)
+							if (!state.Key.IsDisposed) state.Key.Enabled = state.Value;
+						scannerOtaEnabledStates.Clear();
+						AllowDrop = oldAllowDrop;
+						buttonStartScan.Text = oldButtonText;
+						scannerOtaCancellation = null;
+						cancellation.Dispose();
+						labelScanState.Text = result;
+					})) cancellation.Dispose();
+				}
+			});
+		}
+
         OBKScanner scan;
         List<OBKDeviceAPI> founds = new List<OBKDeviceAPI>();
         ContextMenuStrip scannerDeviceMenu;
@@ -121,6 +234,13 @@ namespace BK7231Flasher
         }
         private void startOrStopScannerThread()
         {
+			if (scannerOtaCancellation != null)
+			{
+				buttonStartScan.Text = "Canceling OTA...";
+				buttonStartScan.Enabled = false;
+				scannerOtaCancellation.Cancel();
+				return;
+			}
             if (scan != null)
             {
                 buttonStartScan.Text = "Stopping...";

@@ -2218,6 +2218,7 @@ namespace BK7231Flasher
 
 		void tabControl1_Selecting(object sender, TabControlCancelEventArgs e)
 		{
+			if (scannerOtaCancellation != null) e.Cancel = true;
 			if (sv6x66OperationLockActive && e.TabPage != sv6x66OperationLockedTab)
 				e.Cancel = true;
 		}
@@ -2905,6 +2906,7 @@ namespace BK7231Flasher
 
         private void listView1_MouseClick(object sender, MouseEventArgs e)
         {
+			if (scannerOtaCancellation != null) return;
             if (e.Button == MouseButtons.Right)
             {
                 ListViewItem selectedItem = listView1.GetItemAt(e.X, e.Y);
@@ -2935,6 +2937,12 @@ namespace BK7231Flasher
                     Clipboard.SetText(url);
                 };
                 contextMenu.Items.Add(copyUrlMenuItem);
+				var otaMenuItem = new ToolStripMenuItem("OTA from local file...");
+				otaMenuItem.Enabled = !dev.isTasmota() && OBKOtaImage.FileFilter(dev.getChipSet()) != null
+					&& scan == null && buttonStartMassBackup.Enabled && worker == null
+					&& !terminalFlasherTasks.Exists(task => !task.IsCompleted);
+				otaMenuItem.Click += (s, args) => startScannerOta(dev);
+				contextMenu.Items.Add(otaMenuItem);
 
 
                 ToolStripMenuItem rebootMenuItem = new ToolStripMenuItem("Reboot");
@@ -3041,6 +3049,7 @@ namespace BK7231Flasher
 
         private void buttonStartMassBackup_Click(object sender, EventArgs e)
         {
+			if (scannerOtaCancellation != null) return;
             buttonStartMassBackup.Enabled = false;
             OBKMassBackup backup = new OBKMassBackup();
             for(int i = 0; i < listView1.Items.Count; i++)
@@ -3145,6 +3154,7 @@ namespace BK7231Flasher
 			try { cts?.Cancel(); } catch { }
 			try { flasher?.closePort(); } catch { }
             CloseTerminalPort();
+			try { scannerOtaCancellation?.Cancel(); } catch (ObjectDisposedException) { }
             killScanner();
         }
 

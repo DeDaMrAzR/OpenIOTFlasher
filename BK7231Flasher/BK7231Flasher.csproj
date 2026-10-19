@@ -166,6 +166,7 @@
     <Compile Include="Misc\MySettings.cs" />
     <Compile Include="Misc\OBKConfig.cs" />
     <Compile Include="Misc\OBKDeviceAPI.cs" />
+    <Compile Include="Misc\OBKOtaImage.cs" />
     <Compile Include="Misc\OBKFlags.cs" />
     <Compile Include="Misc\OBKFlashLayout.cs" />
     <Compile Include="Misc\OBKMassBackup.cs" />

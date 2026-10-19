@@ -121,16 +121,16 @@ namespace BK7231Flasher
             this.button1 = new System.Windows.Forms.Button();
             this.tabPage2 = new System.Windows.Forms.TabPage();
             this.splitContainerTuya = new System.Windows.Forms.SplitContainer();
+            this.label17 = new System.Windows.Forms.Label();
+            this.buttonTuyaConfig_CopyJSONToClipBoard = new System.Windows.Forms.Button();
+            this.textBoxTuyaCFGJSON = new System.Windows.Forms.TextBox();
+            this.label18 = new System.Windows.Forms.Label();
+            this.buttonTuyaConfig_CopyTextToClipBoard = new System.Windows.Forms.Button();
+            this.textBoxTuyaCFGText = new System.Windows.Forms.TextBox();
             this.buttonImportConfigFileDialog = new System.Windows.Forms.Button();
             this.linkLabel5 = new System.Windows.Forms.LinkLabel();
             this.label32 = new System.Windows.Forms.Label();
-            this.buttonTuyaConfig_CopyTextToClipBoard = new System.Windows.Forms.Button();
-            this.buttonTuyaConfig_CopyJSONToClipBoard = new System.Windows.Forms.Button();
-            this.label18 = new System.Windows.Forms.Label();
-            this.textBoxTuyaCFGText = new System.Windows.Forms.TextBox();
-            this.label17 = new System.Windows.Forms.Label();
             this.linkLabel4 = new System.Windows.Forms.LinkLabel();
-            this.textBoxTuyaCFGJSON = new System.Windows.Forms.TextBox();
             this.label16 = new System.Windows.Forms.Label();
             this.tabPage5 = new System.Windows.Forms.TabPage();
             this.buttonIPSaveResultToFile = new System.Windows.Forms.Button();
@@ -707,7 +707,7 @@ namespace BK7231Flasher
             // 
             // progressBar1
             // 
-            this.progressBar1.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)
+            this.progressBar1.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
             this.progressBar1.Location = new System.Drawing.Point(771, 616);
             this.progressBar1.Name = "progressBar1";
@@ -942,7 +942,7 @@ namespace BK7231Flasher
             // 
             // progressBarReadRom
             // 
-            this.progressBarReadRom.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)
+            this.progressBarReadRom.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
             this.progressBarReadRom.Location = new System.Drawing.Point(771, 616);
             this.progressBarReadRom.Name = "progressBarReadRom";
@@ -993,8 +993,8 @@ namespace BK7231Flasher
             // 
             // textBoxTerminalLog
             // 
-            this.textBoxTerminalLog.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
-            | System.Windows.Forms.AnchorStyles.Left)
+            this.textBoxTerminalLog.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
             this.textBoxTerminalLog.BackColor = System.Drawing.SystemColors.Window;
             this.textBoxTerminalLog.DetectUrls = false;
@@ -1075,7 +1075,6 @@ namespace BK7231Flasher
             // 
             // labelTerminalStatus
             // 
-            this.labelTerminalStatus.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)));
             this.labelTerminalStatus.AutoEllipsis = true;
             this.labelTerminalStatus.Location = new System.Drawing.Point(450, 11);
             this.labelTerminalStatus.Name = "labelTerminalStatus";
@@ -1086,7 +1085,6 @@ namespace BK7231Flasher
             // 
             // labelTerminalBaud
             // 
-            this.labelTerminalBaud.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)));
             this.labelTerminalBaud.Location = new System.Drawing.Point(537, 11);
             this.labelTerminalBaud.Name = "labelTerminalBaud";
             this.labelTerminalBaud.Padding = new System.Windows.Forms.Padding(8, 6, 0, 0);
@@ -1249,29 +1247,93 @@ namespace BK7231Flasher
             this.tabPage2.DragEnter += new System.Windows.Forms.DragEventHandler(this.tabPage2_DragEnter);
             // 
             // splitContainerTuya
-            //
-            this.splitContainerTuya.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
-            | System.Windows.Forms.AnchorStyles.Left)
+            // 
+            this.splitContainerTuya.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
             this.splitContainerTuya.IsSplitterFixed = true;
             this.splitContainerTuya.Location = new System.Drawing.Point(18, 92);
             this.splitContainerTuya.Name = "splitContainerTuya";
-            //
+            // 
             // splitContainerTuya.Panel1
-            //
+            // 
             this.splitContainerTuya.Panel1.Controls.Add(this.label17);
             this.splitContainerTuya.Panel1.Controls.Add(this.buttonTuyaConfig_CopyJSONToClipBoard);
             this.splitContainerTuya.Panel1.Controls.Add(this.textBoxTuyaCFGJSON);
-            //
+            // 
             // splitContainerTuya.Panel2
-            //
+            // 
             this.splitContainerTuya.Panel2.Controls.Add(this.label18);
             this.splitContainerTuya.Panel2.Controls.Add(this.buttonTuyaConfig_CopyTextToClipBoard);
             this.splitContainerTuya.Panel2.Controls.Add(this.textBoxTuyaCFGText);
             this.splitContainerTuya.Size = new System.Drawing.Size(1326, 544);
             this.splitContainerTuya.SplitterDistance = 663;
             this.splitContainerTuya.TabIndex = 16;
-            //
+            // 
+            // label17
+            // 
+            this.label17.AutoSize = true;
+            this.label17.Location = new System.Drawing.Point(0, 4);
+            this.label17.Name = "label17";
+            this.label17.Size = new System.Drawing.Size(67, 13);
+            this.label17.TabIndex = 8;
+            this.label17.Text = "JSON format";
+            // 
+            // buttonTuyaConfig_CopyJSONToClipBoard
+            // 
+            this.buttonTuyaConfig_CopyJSONToClipBoard.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
+            this.buttonTuyaConfig_CopyJSONToClipBoard.Location = new System.Drawing.Point(549, 0);
+            this.buttonTuyaConfig_CopyJSONToClipBoard.Name = "buttonTuyaConfig_CopyJSONToClipBoard";
+            this.buttonTuyaConfig_CopyJSONToClipBoard.Size = new System.Drawing.Size(114, 21);
+            this.buttonTuyaConfig_CopyJSONToClipBoard.TabIndex = 11;
+            this.buttonTuyaConfig_CopyJSONToClipBoard.Text = "Copy to Clipboard";
+            this.buttonTuyaConfig_CopyJSONToClipBoard.UseVisualStyleBackColor = true;
+            this.buttonTuyaConfig_CopyJSONToClipBoard.Click += new System.EventHandler(this.buttonTuyaConfig_CopyJSONToClipBoard_Click);
+            // 
+            // textBoxTuyaCFGJSON
+            // 
+            this.textBoxTuyaCFGJSON.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
+            | System.Windows.Forms.AnchorStyles.Right)));
+            this.textBoxTuyaCFGJSON.Location = new System.Drawing.Point(0, 24);
+            this.textBoxTuyaCFGJSON.Multiline = true;
+            this.textBoxTuyaCFGJSON.Name = "textBoxTuyaCFGJSON";
+            this.textBoxTuyaCFGJSON.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+            this.textBoxTuyaCFGJSON.Size = new System.Drawing.Size(663, 520);
+            this.textBoxTuyaCFGJSON.TabIndex = 1;
+            // 
+            // label18
+            // 
+            this.label18.AutoSize = true;
+            this.label18.Location = new System.Drawing.Point(0, 4);
+            this.label18.Name = "label18";
+            this.label18.Size = new System.Drawing.Size(82, 13);
+            this.label18.TabIndex = 10;
+            this.label18.Text = "Text description";
+            // 
+            // buttonTuyaConfig_CopyTextToClipBoard
+            // 
+            this.buttonTuyaConfig_CopyTextToClipBoard.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
+            this.buttonTuyaConfig_CopyTextToClipBoard.Location = new System.Drawing.Point(545, 0);
+            this.buttonTuyaConfig_CopyTextToClipBoard.Name = "buttonTuyaConfig_CopyTextToClipBoard";
+            this.buttonTuyaConfig_CopyTextToClipBoard.Size = new System.Drawing.Size(114, 21);
+            this.buttonTuyaConfig_CopyTextToClipBoard.TabIndex = 12;
+            this.buttonTuyaConfig_CopyTextToClipBoard.Text = "Copy to Clipboard";
+            this.buttonTuyaConfig_CopyTextToClipBoard.UseVisualStyleBackColor = true;
+            this.buttonTuyaConfig_CopyTextToClipBoard.Click += new System.EventHandler(this.buttonTuyaConfig_CopyTextToClipBoard_Click);
+            // 
+            // textBoxTuyaCFGText
+            // 
+            this.textBoxTuyaCFGText.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
+            | System.Windows.Forms.AnchorStyles.Right)));
+            this.textBoxTuyaCFGText.Location = new System.Drawing.Point(0, 24);
+            this.textBoxTuyaCFGText.Multiline = true;
+            this.textBoxTuyaCFGText.Name = "textBoxTuyaCFGText";
+            this.textBoxTuyaCFGText.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+            this.textBoxTuyaCFGText.Size = new System.Drawing.Size(659, 520);
+            this.textBoxTuyaCFGText.TabIndex = 9;
+            // 
             // buttonImportConfigFileDialog
             // 
             this.buttonImportConfigFileDialog.Location = new System.Drawing.Point(18, 43);
@@ -1303,58 +1365,6 @@ namespace BK7231Flasher
             this.label32.Text = "You can also get binary from OBK device, only Tuya-config section, 72KB, see tuto" +
     "rial:";
             // 
-            // buttonTuyaConfig_CopyTextToClipBoard
-            // 
-            this.buttonTuyaConfig_CopyTextToClipBoard.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-            this.buttonTuyaConfig_CopyTextToClipBoard.Location = new System.Drawing.Point(545, 0);
-            this.buttonTuyaConfig_CopyTextToClipBoard.Name = "buttonTuyaConfig_CopyTextToClipBoard";
-            this.buttonTuyaConfig_CopyTextToClipBoard.Size = new System.Drawing.Size(114, 21);
-            this.buttonTuyaConfig_CopyTextToClipBoard.TabIndex = 12;
-            this.buttonTuyaConfig_CopyTextToClipBoard.Text = "Copy to Clipboard";
-            this.buttonTuyaConfig_CopyTextToClipBoard.UseVisualStyleBackColor = true;
-            this.buttonTuyaConfig_CopyTextToClipBoard.Click += new System.EventHandler(this.buttonTuyaConfig_CopyTextToClipBoard_Click);
-            // 
-            // buttonTuyaConfig_CopyJSONToClipBoard
-            // 
-            this.buttonTuyaConfig_CopyJSONToClipBoard.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-            this.buttonTuyaConfig_CopyJSONToClipBoard.Location = new System.Drawing.Point(549, 0);
-            this.buttonTuyaConfig_CopyJSONToClipBoard.Name = "buttonTuyaConfig_CopyJSONToClipBoard";
-            this.buttonTuyaConfig_CopyJSONToClipBoard.Size = new System.Drawing.Size(114, 21);
-            this.buttonTuyaConfig_CopyJSONToClipBoard.TabIndex = 11;
-            this.buttonTuyaConfig_CopyJSONToClipBoard.Text = "Copy to Clipboard";
-            this.buttonTuyaConfig_CopyJSONToClipBoard.UseVisualStyleBackColor = true;
-            this.buttonTuyaConfig_CopyJSONToClipBoard.Click += new System.EventHandler(this.buttonTuyaConfig_CopyJSONToClipBoard_Click);
-            // 
-            // label18
-            // 
-            this.label18.AutoSize = true;
-            this.label18.Location = new System.Drawing.Point(0, 4);
-            this.label18.Name = "label18";
-            this.label18.Size = new System.Drawing.Size(82, 13);
-            this.label18.TabIndex = 10;
-            this.label18.Text = "Text description";
-            // 
-            // textBoxTuyaCFGText
-            // 
-            this.textBoxTuyaCFGText.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
-            this.textBoxTuyaCFGText.Location = new System.Drawing.Point(0, 24);
-            this.textBoxTuyaCFGText.Multiline = true;
-            this.textBoxTuyaCFGText.Name = "textBoxTuyaCFGText";
-            this.textBoxTuyaCFGText.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.textBoxTuyaCFGText.Size = new System.Drawing.Size(659, 520);
-            this.textBoxTuyaCFGText.TabIndex = 9;
-            // 
-            // label17
-            // 
-            this.label17.AutoSize = true;
-            this.label17.Location = new System.Drawing.Point(0, 4);
-            this.label17.Name = "label17";
-            this.label17.Size = new System.Drawing.Size(67, 13);
-            this.label17.TabIndex = 8;
-            this.label17.Text = "JSON format";
-            // 
             // linkLabel4
             // 
             this.linkLabel4.AutoSize = true;
@@ -1365,18 +1375,6 @@ namespace BK7231Flasher
             this.linkLabel4.TabStop = true;
             this.linkLabel4.Text = "OBK Template Converter";
             this.linkLabel4.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.linkLabel4_LinkClicked);
-            // 
-            // textBoxTuyaCFGJSON
-            // 
-            this.textBoxTuyaCFGJSON.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
-            | System.Windows.Forms.AnchorStyles.Left)
-            | System.Windows.Forms.AnchorStyles.Right)));
-            this.textBoxTuyaCFGJSON.Location = new System.Drawing.Point(0, 24);
-            this.textBoxTuyaCFGJSON.Multiline = true;
-            this.textBoxTuyaCFGJSON.Name = "textBoxTuyaCFGJSON";
-            this.textBoxTuyaCFGJSON.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.textBoxTuyaCFGJSON.Size = new System.Drawing.Size(663, 520);
-            this.textBoxTuyaCFGJSON.TabIndex = 1;
             // 
             // label16
             // 
@@ -1555,7 +1553,7 @@ namespace BK7231Flasher
             // 
             this.textBoxIPScannerPass.Location = new System.Drawing.Point(296, 70);
             this.textBoxIPScannerPass.Name = "textBoxIPScannerPass";
-            this.textBoxIPScannerPass.Size = new System.Drawing.Size(151, 20);
+            this.textBoxIPScannerPass.Size = new System.Drawing.Size(155, 20);
             this.textBoxIPScannerPass.TabIndex = 19;
             this.textBoxIPScannerPass.UseSystemPasswordChar = true;
             // 
@@ -1747,9 +1745,9 @@ namespace BK7231Flasher
             // 
             // textBoxEndIP
             // 
-            this.textBoxEndIP.Location = new System.Drawing.Point(282, 42);
+            this.textBoxEndIP.Location = new System.Drawing.Point(296, 42);
             this.textBoxEndIP.Name = "textBoxEndIP";
-            this.textBoxEndIP.Size = new System.Drawing.Size(169, 20);
+            this.textBoxEndIP.Size = new System.Drawing.Size(155, 20);
             this.textBoxEndIP.TabIndex = 3;
             this.textBoxEndIP.Text = "192.168.0.254";
             this.textBoxEndIP.TextChanged += new System.EventHandler(this.textBoxEndIP_TextChanged);
@@ -1765,9 +1763,9 @@ namespace BK7231Flasher
             // 
             // textBoxStartIP
             // 
-            this.textBoxStartIP.Location = new System.Drawing.Point(59, 42);
+            this.textBoxStartIP.Location = new System.Drawing.Point(77, 42);
             this.textBoxStartIP.Name = "textBoxStartIP";
-            this.textBoxStartIP.Size = new System.Drawing.Size(169, 20);
+            this.textBoxStartIP.Size = new System.Drawing.Size(151, 20);
             this.textBoxStartIP.TabIndex = 1;
             this.textBoxStartIP.Text = "192.168.0.1";
             this.textBoxStartIP.TextChanged += new System.EventHandler(this.textBoxStartIP_TextChanged);
@@ -2401,14 +2399,14 @@ namespace BK7231Flasher
             this.tableLayoutPanelTerminalSend.PerformLayout();
             this.tabPagePageTool.ResumeLayout(false);
             this.tabPagePageTool.PerformLayout();
+            this.tabPage2.ResumeLayout(false);
+            this.tabPage2.PerformLayout();
             this.splitContainerTuya.Panel1.ResumeLayout(false);
             this.splitContainerTuya.Panel1.PerformLayout();
             this.splitContainerTuya.Panel2.ResumeLayout(false);
             this.splitContainerTuya.Panel2.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.splitContainerTuya)).EndInit();
             this.splitContainerTuya.ResumeLayout(false);
-            this.tabPage2.ResumeLayout(false);
-            this.tabPage2.PerformLayout();
             this.tabPage5.ResumeLayout(false);
             this.tabPage5.PerformLayout();
             this.tabPage6.ResumeLayout(false);

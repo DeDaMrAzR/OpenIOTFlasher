@@ -144,7 +144,20 @@ namespace BK7231Flasher
             //    }
             //}
             
-            return true;
+			try
+			{
+				Type settingsType = typeof(SettingsSection).Assembly.GetType("System.Net.Configuration.SettingsSectionInternal");
+				object settings = settingsType?.GetProperty("Section", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null, null);
+				FieldInfo unsafeParsing = settingsType?.GetField("useUnsafeHeaderParsing", BindingFlags.Instance | BindingFlags.NonPublic);
+				if (settings == null || unsafeParsing == null)
+					return false;
+				unsafeParsing.SetValue(settings, enable);
+				return true;
+			}
+			catch (Exception)
+			{
+				return false;
+			}
         }
 
         internal BKType getBKType()
@@ -431,7 +444,7 @@ namespace BK7231Flasher
         private string sendGet(string path)
         {
             byte[] res = sendGetInternal(path);
-            string sResult = "";
+			string sResult = null;
             if (res != null)
             {
                 sResult = Encoding.ASCII.GetString(res);
@@ -441,6 +454,8 @@ namespace BK7231Flasher
         private JsonObject sendGenericJSONGet(string path, out string jsonText)
         {
             jsonText = sendGet(path);
+			if (jsonText == null)
+				return null;
             JsonObject jsonObject = null;
             try
             {
@@ -529,68 +544,72 @@ namespace BK7231Flasher
             JsonObject jsonObject = sendGenericJSONGet("/" + getBaseCmndString ()+ escape(arg.cmnd), out replyStr);
             if (arg.cb != null)
             {
-                arg.cb(this, jsonObject, replyStr);
+				arg.cb(this, jsonObject, replyStr ?? "");
             }
         }
         public void ThreadSendGetInfo(object ocb)
         {
-            ProcessJSONReply cb = ocb as ProcessJSONReply;
-            bGetInfoFailed = false;
-            bGetInfoSuccess = false;
-            string jsonText;
-            this.bTasmota = true;
+			ProcessJSONReply cb = ocb as ProcessJSONReply;
+			bGetInfoFailed = false;
+			bGetInfoSuccess = false;
+			info = null;
+			statusSTS = null;
+			powerCount = 0;
+			string jsonText;
+			this.bTasmota = true;
             // format cm?cmnd= string 
-            this.status = sendGenericJSONGet("/" + getBaseCmndString() + escape("STATUS 0"), out jsonText);
-            if (this.status == null)
-            {
-                bGetInfoFailed = true;
-            }
-            else
-            {
-                if (status.TryGetPropertyValue("StatusSTS", out var o) == false)
-                {
-                }
-                statusSTS = (JsonObject)o;
+			this.status = sendGenericJSONGet("/" + getBaseCmndString() + escape("STATUS 0"), out jsonText);
+			if (this.status != null)
+			{
+				if (status.TryGetPropertyValue("StatusSTS", out var o) == false)
+				{
+				}
+				statusSTS = (JsonObject)o;
 
-                if(statusSTS != null)
-                {
-                    foreach (var property in statusSTS)
-                    {
-                        string key = property.Key;
+				if (statusSTS != null)
+				{
+					foreach (var property in statusSTS)
+					{
+						string key = property.Key;
                         //var value = property.Value.ToString();
-                        if (key.StartsWith("POWER"))
-                        {
-                            powerCount++;
-                        }
-                    }
-                }
-                if (getSDK().ToLower() == "obk")
-                {
-                    this.bTasmota = false;
-                    for (int att = 0; att < 4; att++)
-                    {
-                        JsonObject jsonObject = sendGenericJSONGet("/api/info", out jsonText);
-                        this.info = jsonObject;
-                        if (this.info != null)
-                        {
-                            break;
-                        }
-                        Thread.Sleep(50*att);
-                    }
-                }
-                else
-                {
-                    this.bTasmota = true;
-                }
-            }
-            if(this.info != null || this.status != null)
-            {
-                bGetInfoSuccess = true;
-            }
-            if (cb != null)
-            {
-                cb(this);
-            }
+						if (key.StartsWith("POWER"))
+						{
+							powerCount++;
+						}
+					}
+				}
+			}
+			if (jsonText != null && (this.status == null || getSDK().ToLower() == "obk"))
+			{
+				JsonObject jsonObject = sendGenericJSONGet("/api/info", out jsonText);
+				bool validInfo = jsonObject != null;
+				if (validInfo && this.status == null)
+				{
+					foreach (string key in new[] { "chipset", "shortName", "mac", "build" })
+					{
+						if (!(jsonObject[key] is JsonValue value)
+							|| !value.TryGetValue<string>(out string text)
+							|| string.IsNullOrWhiteSpace(text))
+						{
+							validInfo = false;
+							break;
+						}
+					}
+				}
+				if (validInfo)
+				{
+					this.info = jsonObject;
+					this.bTasmota = false;
+				}
+				if (this.status != null)
+					this.bTasmota = false;
+			}
+			bGetInfoSuccess = this.info != null || this.status != null;
+			bGetInfoFailed = !bGetInfoSuccess;
+			if (cb != null)
+			{
+				cb(this);
+			}
         }
         private void ThreadSendGetInfoSafe(object ocb)
         {
@@ -701,6 +720,130 @@ namespace BK7231Flasher
             }
             return -1;
         }
+		internal void UploadOta(OBKOtaImage image, string expectedChipset, string expectedMac,
+			CancellationToken cancellation, ProcessProgress progress, Action<string> statusUpdate)
+		{
+			statusUpdate("Checking device identity...");
+			JsonObject identity = OtaRequest("GET", "/api/info", null, cancellation, null);
+			if (!string.Equals(OtaString(identity, "chipset"), expectedChipset, StringComparison.OrdinalIgnoreCase)
+				|| string.IsNullOrWhiteSpace(expectedMac)
+				|| !string.Equals(OtaString(identity, "mac"), expectedMac, StringComparison.OrdinalIgnoreCase))
+				throw new IOException("Device identity changed or could not be confirmed. Nothing was uploaded.");
+			statusUpdate("Uploading firmware...");
+			JsonObject reply = OtaRequest("POST", "/api/ota", image.Data, cancellation, progress);
+			if (reply.ContainsKey("error"))
+				throw new IOException("Device rejected the OTA package. No reboot was requested.");
+			if (image.IsSv6)
+			{
+				if (OtaString(reply, "status") != "verified")
+					throw new IOException("Device did not confirm firmware verification. Reboot state is unknown.");
+				statusUpdate("Firmware verified; device will reset automatically. Normal boot has not been confirmed.");
+				return;
+			}
+			if (!(reply["size"] is JsonValue sizeValue) || !sizeValue.TryGetValue<long>(out long size)
+				|| size < 0 || (size == 0 && !image.IsWinnerMicro))
+				throw new IOException("Upload was not positively acknowledged. No reboot was requested; device state is uncertain.");
+			statusUpdate(size == 0 ? "Device accepted firmware (legacy acknowledgement). Requesting reboot..."
+				: "Device accepted firmware. Requesting reboot...");
+			try
+			{
+				JsonObject reboot = OtaRequest("POST", "/api/reboot", null, cancellation, null);
+				if (reboot.ContainsKey("error") || !(reboot["reboot"] is JsonValue rebootValue)
+					|| !rebootValue.TryGetValue<int>(out int delay) || delay != 3)
+					throw new IOException("Unexpected reboot acknowledgement.");
+			}
+			catch (OperationCanceledException) { throw; }
+			catch (Exception ex)
+			{
+				throw new IOException("Firmware was accepted, but reboot was not acknowledged. Reboot state is unknown.", ex);
+			}
+			statusUpdate("Firmware accepted; reboot requested. Normal boot has not been confirmed.");
+		}
+
+		static string OtaString(JsonObject json, string key)
+		{
+			return json[key] is JsonValue value && value.TryGetValue<string>(out string text) ? text : null;
+		}
+
+		JsonObject OtaRequest(string method, string path, byte[] data, CancellationToken cancellation, ProcessProgress progress)
+		{
+			cancellation.ThrowIfCancellationRequested();
+			if (!IPAddress.TryParse(adr, out IPAddress address))
+				throw new IOException("OTA requires the selected scanner device's IP address.");
+			var request = (HttpWebRequest)WebRequest.Create(new UriBuilder("http", address.ToString(), 80, path).Uri);
+			request.Method = method;
+			request.Timeout = 15000;
+			request.ReadWriteTimeout = 15000;
+			request.AllowAutoRedirect = false;
+			request.Proxy = null;
+			request.KeepAlive = false;
+			request.SendChunked = false;
+			request.AllowWriteStreamBuffering = false;
+			request.ServicePoint.Expect100Continue = false;
+			ToggleAllowUnsafeHeaderParsing(true);
+			if (!string.IsNullOrEmpty(password) || !string.IsNullOrEmpty(userName))
+			{
+				string user = string.IsNullOrEmpty(userName) ? "admin" : userName;
+				request.Headers[HttpRequestHeader.Authorization] = "Basic "
+					+ Convert.ToBase64String(Encoding.UTF8.GetBytes(user + ":" + (password ?? "")));
+			}
+			try
+			{
+				using (cancellation.Register(request.Abort))
+				{
+					if (method == "POST")
+					{
+						request.ContentType = "application/octet-stream";
+						request.ContentLength = data?.Length ?? 0;
+						if (data != null)
+						{
+							using (Stream stream = request.GetRequestStream())
+							{
+								int sent = 0, lastPercent = -1;
+								while (sent < data.Length)
+								{
+									cancellation.ThrowIfCancellationRequested();
+									int count = Math.Min(16384, data.Length - sent);
+									stream.Write(data, sent, count);
+									sent += count;
+									int percent = (int)(100L * sent / data.Length);
+									if (percent != lastPercent)
+									{
+										progress?.Invoke(sent, data.Length);
+										lastPercent = percent;
+									}
+								}
+							}
+						}
+					}
+					using (var response = (HttpWebResponse)request.GetResponse())
+					using (Stream stream = response.GetResponseStream())
+					using (var body = new MemoryStream())
+					{
+						if (response.StatusCode != HttpStatusCode.OK)
+							throw new IOException("Unexpected device HTTP status.");
+						byte[] buffer = new byte[4096];
+						int count;
+						while ((count = stream.Read(buffer, 0, buffer.Length)) != 0)
+						{
+							cancellation.ThrowIfCancellationRequested();
+							if (body.Length + count > 65536) throw new IOException("Device response is too large.");
+							body.Write(buffer, 0, count);
+						}
+						JsonObject json = JsonNode.Parse(Encoding.UTF8.GetString(body.ToArray())) as JsonObject;
+						if (json == null) throw new IOException("Device did not return a JSON acknowledgement.");
+						return json;
+					}
+				}
+			}
+			catch (WebException ex)
+			{
+				ex.Response?.Dispose();
+				cancellation.ThrowIfCancellationRequested();
+				throw new IOException("Device HTTP request failed. Transfer or reboot state may be uncertain; no retry was made.", ex);
+			}
+		}
+
         internal bool isTasmota()
         {
             return bTasmota;
