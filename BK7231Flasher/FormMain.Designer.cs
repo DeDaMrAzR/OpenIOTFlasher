@@ -35,6 +35,8 @@ namespace BK7231Flasher
             System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(FormMain));
             this.buttonRead = new System.Windows.Forms.Button();
             this.textBoxLog = new System.Windows.Forms.RichTextBox();
+            this.groupBoxFlasherGuide = new System.Windows.Forms.GroupBox();
+            this.textBoxFlasherGuide = new System.Windows.Forms.RichTextBox();
             this.comboBoxUART = new System.Windows.Forms.ComboBox();
             this.label1 = new System.Windows.Forms.Label();
             this.label2 = new System.Windows.Forms.Label();
@@ -380,6 +382,7 @@ namespace BK7231Flasher
             this.tabPage1.Controls.Add(this.buttonClearLog);
             this.tabPage1.Controls.Add(this.buttonStop);
             this.tabPage1.Controls.Add(this.checkBoxShowAdvanced);
+            this.tabPage1.Controls.Add(this.groupBoxFlasherGuide);
             this.tabPage1.Controls.Add(this.buttonDoBackupAndFlashNew);
             this.tabPage1.Controls.Add(this.buttonTestWrite);
             this.tabPage1.Controls.Add(this.buttonTestReadWrite);
@@ -627,6 +630,32 @@ namespace BK7231Flasher
             this.buttonStop.UseVisualStyleBackColor = true;
             this.buttonStop.Click += new System.EventHandler(this.buttonStop_Click);
             // 
+            // groupBoxFlasherGuide
+            //
+            this.groupBoxFlasherGuide.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+            | System.Windows.Forms.AnchorStyles.Left)));
+            this.groupBoxFlasherGuide.Controls.Add(this.textBoxFlasherGuide);
+            this.groupBoxFlasherGuide.Location = new System.Drawing.Point(11, 324);
+            this.groupBoxFlasherGuide.Name = "groupBoxFlasherGuide";
+            this.groupBoxFlasherGuide.Padding = new System.Windows.Forms.Padding(10, 8, 10, 10);
+            this.groupBoxFlasherGuide.Size = new System.Drawing.Size(644, 286);
+            this.groupBoxFlasherGuide.TabIndex = 42;
+            this.groupBoxFlasherGuide.TabStop = false;
+            this.groupBoxFlasherGuide.Text = "Connection guide";
+            //
+            // textBoxFlasherGuide
+            //
+            this.textBoxFlasherGuide.BackColor = System.Drawing.SystemColors.Window;
+            this.textBoxFlasherGuide.BorderStyle = System.Windows.Forms.BorderStyle.None;
+            this.textBoxFlasherGuide.DetectUrls = false;
+            this.textBoxFlasherGuide.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.textBoxFlasherGuide.Font = new System.Drawing.Font("Microsoft Sans Serif", 9F);
+            this.textBoxFlasherGuide.Name = "textBoxFlasherGuide";
+            this.textBoxFlasherGuide.ReadOnly = true;
+            this.textBoxFlasherGuide.ScrollBars = System.Windows.Forms.RichTextBoxScrollBars.Vertical;
+            this.textBoxFlasherGuide.TabIndex = 0;
+            this.textBoxFlasherGuide.Text = "";
+            //
             // checkBoxShowAdvanced
             // 
             this.checkBoxShowAdvanced.AutoSize = true;
@@ -2427,6 +2456,8 @@ namespace BK7231Flasher
         #endregion
         private System.Windows.Forms.Button buttonRead;
         private System.Windows.Forms.RichTextBox textBoxLog;
+        private System.Windows.Forms.GroupBox groupBoxFlasherGuide;
+        private System.Windows.Forms.RichTextBox textBoxFlasherGuide;
         private System.Windows.Forms.ComboBox comboBoxUART;
         private System.Windows.Forms.Label label1;
         private System.Windows.Forms.Label label2;

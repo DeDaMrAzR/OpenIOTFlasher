@@ -797,6 +797,7 @@ namespace BK7231Flasher
 		{
 			refreshType(comboBoxChipType, comboBoxUART, comboBoxBaudRate);
 			updateFlasherBaudRates();
+            updateFlasherGuide();
 		}
 
 		void updateFlasherBaudRates()
@@ -829,6 +830,41 @@ namespace BK7231Flasher
 			else if(comboBoxBaudRate.Items.Count > 0)
 				comboBoxBaudRate.SelectedIndex = 0;
 		}
+
+        void updateFlasherGuide()
+        {
+            BKType selectedType = getSelectedChipType(comboBoxChipType);
+            groupBoxFlasherGuide.Text = "Connection guide: " + FlashPlatformCatalog.GetDisplayName(selectedType);
+            string instructions = PlatformBootModeGuide.GetInstructions(selectedType);
+            // The shared guide's missing-entry message is specific to the ROM reader.
+            if (string.IsNullOrWhiteSpace(instructions)
+                || instructions == PlatformBootModeGuide.GetInstructions(BKType.Invalid))
+            {
+                instructions = "No connection instructions are available for this platform yet. "
+                    + "Check the device's flashing documentation for wiring and boot-mode requirements.";
+            }
+
+            // Keep wiring lines together, with space between the explanatory paragraphs.
+            string[] lines = instructions.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
+            var formatted = new StringBuilder();
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (i > 0)
+                {
+                    formatted.AppendLine();
+                    if (!lines[i].StartsWith("- ") || !lines[i - 1].StartsWith("- "))
+                        formatted.AppendLine();
+                }
+                formatted.Append(lines[i]);
+            }
+            string text = formatted.ToString();
+            if (textBoxFlasherGuide.Text != text)
+            {
+                textBoxFlasherGuide.Text = text;
+                textBoxFlasherGuide.Select(0, 0);
+                textBoxFlasherGuide.ScrollToCaret();
+            }
+        }
 
         void updateReadRomControlsForSelectedPlatform(bool logBootInstructions)
         {
@@ -2295,7 +2331,8 @@ namespace BK7231Flasher
 		{
 			foreach (Control control in sv6x66OperationEnabledStates.Keys)
 			{
-				if (isUserInteractiveControl(control) && control != buttonStop && control != buttonClearLog)
+				if (isUserInteractiveControl(control) && control != buttonStop && control != buttonClearLog
+					&& control != textBoxFlasherGuide)
 					control.Enabled = false;
 			}
 			buttonStop.Enabled = true;
@@ -2583,6 +2620,10 @@ namespace BK7231Flasher
         private void showAdvancedOptions(bool b)
         {
 			checkBoxVerifyBackupWrite.Visible = b;
+            // Reserve the advanced controls' column only while those controls are shown.
+            int guideLeft = b ? checkBoxOverwriteBootloader.Right + checkBoxShowAdvanced.Left : checkBoxShowAdvanced.Left;
+            groupBoxFlasherGuide.SetBounds(guideLeft, groupBoxFlasherGuide.Top,
+                textBoxLog.Left - checkBoxShowAdvanced.Left - guideLeft, groupBoxFlasherGuide.Height);
             buttonTestReadWrite.Visible = b;
             buttonTestWrite.Visible = b;
             buttonEraseAll.Visible = b;
