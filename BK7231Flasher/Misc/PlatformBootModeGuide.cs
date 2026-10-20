@@ -13,12 +13,12 @@ namespace BK7231Flasher
             { BKType.BK7236, GetBekenUartInstructions("BK7236", "download UART", "DL_UART_TX", "DL_UART_RX") },
             { BKType.BK7238, GetBekenUart1Instructions("BK7238") },
             { BKType.BK7239N, GetBekenUartInstructions("BK7239N", "download UART", "DL_UART_TX", "DL_UART_RX") },
-            { BKType.BK7252, "" },
+            { BKType.BK7252, GetBekenUart1Instructions("BK7252") },
             { BKType.BK7252N, GetBekenUart1Instructions("BK7252N") },
             { BKType.BK7258, GetBekenUartInstructions("BK7258", "download UART", "DL_UART_TX", "DL_UART_RX") },
-            { BKType.BL602, "" },
-            { BKType.BL702, "" },
-            { BKType.BL616, "" },
+            { BKType.BL602, GetBLInstructions("BL602", "IO16", "IO7", "IO8") },
+            { BKType.BL702, GetBLInstructions("BL702", "IO14", "IO15", "IO28") },
+            { BKType.BL616, GetBLInstructions("BL616", "IO21", "IO22", "IO2") },
             { BKType.LN882H, GetLn882xInstructions("LN882H", "A2", "A3", "BOOT/GPIOA9") },
             { BKType.LN8825, GetLn882xInstructions("LN8825B", "B9", "B8", "BOOT/GPIOA10") },
             { BKType.ESP32, "" },
@@ -40,23 +40,24 @@ namespace BK7231Flasher
             { BKType.RTL87X0C, GetRtl87x0cInstructions() },
             { BKType.RDA5981, GetRda5981Instructions() },
             { BKType.TR6260, GetTR6260Instructions() },
+            { BKType.W600, "" },
             { BKType.W800, GetW800Instructions() },
             { BKType.XR806, GetXr806Instructions() },
             { BKType.XR809, GetXrUart0TwoBootPinsInstructions("XR809") },
             { BKType.XR872, GetXrUart0TwoBootPinsInstructions("XR872") },
-			{ BKType.SV6X66, GetSv6x66Instructions() },
+            { BKType.SV6X66, GetSv6x66Instructions() },
         };
 
-		static string GetSv6x66Instructions()
-		{
-			return "Connect one 3.3 V USB-to-TTL UART to the SV6x66 product/factory port:" + System.Environment.NewLine +
-				"- Adapter RX -> SV6166F GPIO7 / TXD1" + System.Environment.NewLine +
-				"- Adapter TX -> SV6166F GPIO6 / RXD1" + System.Environment.NewLine +
-				"- Adapter GND -> target GND" + System.Environment.NewLine +
-				"- Reset the target manually when prompted" + System.Environment.NewLine +
-				GetPowerAndGroundInstructions() + System.Environment.NewLine +
-				"Backup and full restore support targets running stock FWSWES-SV04MATE-3.7.1 or the recognized CKW04 OpenBeken factory profile. Application installation accepts validated dual-bank OpenBeken bundles (.bin or .sv6ota). Factory entry uses 9600 baud, loader staging uses 115200, and flash operations use the selected rate. Stock firmware selects the inactive bank; OpenBeken reports its running bank so the flasher can stage the opposite bank. The loader handoff is validated. RTS is not used by the GUI. Creating a backup replaces the inactive bank; the saved 2 MiB image is normalized and cannot preserve that bank's previous contents. Full restore writes the complete backup unchanged, including its saved boot selector last. If this procedure is stopped before completion, restoring chip functionality will require SPI recovery!";
-		}
+        static string GetSv6x66Instructions()
+        {
+            return "Connect one 3.3 V USB-to-TTL UART to the SV6x66 product/factory port:" + System.Environment.NewLine +
+                "- Adapter RX -> SV6166F GPIO7 / TXD1" + System.Environment.NewLine +
+                "- Adapter TX -> SV6166F GPIO6 / RXD1" + System.Environment.NewLine +
+                "- Adapter GND -> target GND" + System.Environment.NewLine +
+                "- Reset the target manually when prompted" + System.Environment.NewLine +
+                GetPowerAndGroundInstructions() + System.Environment.NewLine +
+                "Backup and full restore support targets running stock FWSWES-SV04MATE-3.7.1 or the recognized CKW04 OpenBeken factory profile. Application installation accepts validated dual-bank OpenBeken bundles (.bin or .sv6ota). Factory entry uses 9600 baud, loader staging uses 115200, and flash operations use the selected rate. Stock firmware selects the inactive bank; OpenBeken reports its running bank so the flasher can stage the opposite bank. The loader handoff is validated. RTS is not used by the GUI. Creating a backup replaces the inactive bank; the saved 2 MiB image is normalized and cannot preserve that bank's previous contents. Full restore writes the complete backup unchanged, including its saved boot selector last. If this procedure is stopped before completion, restoring chip functionality will require SPI/USB recovery!";
+        }
 
         static string GetBekenUart1Instructions(string platformName)
         {
@@ -71,6 +72,17 @@ namespace BK7231Flasher
                 "- Adapter GND -> target GND" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
                 "Start the read first. While the tool is trying to connect, reset the chip by briefly pulling CEN to GND, or by power-cycling the 3.3 V supply. If linking does not start, try the reset/power-cycle again.";
+        }
+
+        static string GetBLInstructions(string platformName, string txPin, string rxPin, string bootPin)
+        {
+            return $"Connect the {platformName} UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+                $"- Adapter RX -> {platformName} {txPin} / TX0" + System.Environment.NewLine +
+                $"- Adapter TX -> {platformName} {rxPin} / RX0" + System.Environment.NewLine +
+                "- Adapter GND -> target GND" + System.Environment.NewLine +
+                $"- {bootPin} / BOOT -> 3.3 V" + System.Environment.NewLine +
+                GetPowerAndGroundInstructions() + System.Environment.NewLine +
+                $"With {bootPin} / BOOT pulled high, reset the chip by briefly pulling EN to GND, or by power-cycling the 3.3 V supply.";
         }
 
         static string GetLn882xInstructions(string platformName, string txPin, string rxPin, string bootPin)
@@ -93,7 +105,7 @@ namespace BK7231Flasher
                 "- PA00 / GPIO0 -> 3.3 V" + System.Environment.NewLine +
                 "- PA13 / GPIO13 (RXD) -> 3.3 V" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "With PA00 and PA13 pulled high, start the read operation first, then reset the chip by briefly pulling CEN to GND, or by power-cycling the 3.3 V supply.";
+                "With PA00 and PA13 pulled high, reset the chip by briefly pulling CEN to GND, or by power-cycling the 3.3 V supply.";
         }
 
         static string GetRtlUartDownloadInstructions(string platformName, string logRxPin, string logTxPin)
@@ -130,13 +142,13 @@ namespace BK7231Flasher
         static string GetGd32vw553Instructions()
         {
             return "Connect the GD32VW553 UART flash download port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> GD32VW553 TX (PB15)" + System.Environment.NewLine +
-                "- Adapter TX -> GD32VW553 RX (PA8)" + System.Environment.NewLine +
+                "- Adapter RX -> GD32VW553 TX0 (PB15) or TX1 (PA4) or TX2 (PA6)" + System.Environment.NewLine +
+                "- Adapter TX -> GD32VW553 RX0 (PA8) or RX1 (PA5) or RX2 (PA7)" + System.Environment.NewLine +
                 "- Adapter GND -> target GND" + System.Environment.NewLine +
                 "- PC8 / BOOT0 -> 3.3 V" + System.Environment.NewLine +
                 "- PB1 / BOOT1 -> GND if the target does not already hold BOOT1 low" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "With BOOT0 held high, reset the chip with RST/NRST or power-cycle the 3.3 V supply. Once the target is in UART download mode, start the read.";
+                "With BOOT0 held high, reset the chip with RST/NRST or power-cycle the 3.3 V supply. Ensure that you connect to a single UART port (like RX0/TX0, and not RX1/TX2). Once the target is in UART download mode, start the read.";
         }
 
         static string GetRda5981Instructions()
