@@ -34,7 +34,7 @@ namespace BK7231Flasher
             { BKType.GD32VW553, GetGd32vw553Instructions() },
             { BKType.OPL1000A2, GetOplInstructions() },
             { BKType.RTL8710B, GetRtlUartDownloadInstructions("RTL8710B", "PA29", "PA30") },
-            { BKType.RTL8720D, GetRtlUartDownloadInstructions("RTL8720D", "PB1", "PB0") },
+            { BKType.RTL8720D, GetRtlUartDownloadInstructions("RTL8720D", "PA8", "PA7") },
             { BKType.RTL8721DA, GetRtlUartDownloadInstructions("RTL8721DA", "PB4", "PB5") },
             { BKType.RTL8720E, GetRtlUartDownloadInstructions("RTL8720E", "PA19", "PA20") },
             { BKType.RTL87X0C, GetRtl87x0cInstructions() },
@@ -71,7 +71,7 @@ namespace BK7231Flasher
                 "- Adapter TX -> " + platformName + " " + rxName + " (GPIO10 / P10)" + System.Environment.NewLine +
                 "- Adapter GND -> target GND" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "Start the read first. While the tool is trying to connect, reset the chip by briefly pulling CEN to GND, or by power-cycling the 3.3 V supply. If linking does not start, try the reset/power-cycle again.";
+                "Start the operation first. While the tool is trying to connect, reset the chip by briefly pulling CEN to GND, or by power-cycling the 3.3 V supply. If linking does not start, try the reset/power-cycle again.";
         }
 
         static string GetBLInstructions(string platformName, string txPin, string rxPin, string bootPin)
@@ -114,8 +114,9 @@ namespace BK7231Flasher
                 $"- Adapter RX -> {platformName} Log_TX ({logTxPin})" + System.Environment.NewLine +
                 $"- Adapter TX -> {platformName} Log_RX ({logRxPin})" + System.Environment.NewLine +
                 "- Adapter GND -> target GND" + System.Environment.NewLine +
+                $"- Log_TX ({logTxPin}) -> GND temporarily during reset" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                $"Temporarily hold {logTxPin} low while resetting the chip or power-cycling the 3.3 V supply. Then release {logTxPin} it and start the read.";
+                $"With {logTxPin} held low, reset the chip by briefly pulling CEN to GND and releasing it, or by power-cycling the 3.3 V supply. After reset, remove the temporary {logTxPin}-to-GND connection, leaving the UART connections in place. Then start the operation.";
         }
 
         static string GetEcr6600Instructions()
@@ -125,7 +126,7 @@ namespace BK7231Flasher
                 "- Adapter TX -> ECR6600 RX0 (GPIO5)" + System.Environment.NewLine +
                 "- Adapter GND -> target GND" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "Start the read first. While the tool is trying to connect, reset the target by briefly pulling RST low, or power-cycle the 3.3 V supply. If linking does not start, try the reset or power-cycle again.";
+                "Start the operation first. While the tool is trying to connect, reset the target by briefly pulling RST low, or power-cycle the 3.3 V supply. If linking does not start, try the reset or power-cycle again.";
         }
 
         static string GetW800Instructions()
@@ -135,8 +136,8 @@ namespace BK7231Flasher
                 "- Adapter TX -> W800 UART0_RX (PB20)" + System.Environment.NewLine +
                 "- Adapter GND -> target GND" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "First try starting the read with the target running normally. The flasher will send the AT+Z software-reset command at 115200 baud, then send ESC characters while waiting for ROM download mode. Software reset only works when the existing firmware accepts WinnerMicro AT commands." + System.Environment.NewLine +
-                "If automatic entry does not work, start the read, hold BOOTMODE low, then reset the chip by briefly pulling RESET low or by power-cycling the 3.3 V supply. Keep BOOTMODE low for at least 30 ms after reset or power-on, then release it while the tool is trying to connect.";
+                "First try starting the operation with the target running normally. The flasher will send the AT+Z software-reset command at 115200 baud, then send ESC characters while waiting for ROM download mode. Software reset only works when the existing firmware accepts WinnerMicro AT commands." + System.Environment.NewLine +
+                "If automatic entry does not work, start the operation, hold BOOTMODE low, then reset the chip by briefly pulling RESET low or by power-cycling the 3.3 V supply. Keep BOOTMODE low for at least 30 ms after reset or power-on, then release it while the tool is trying to connect.";
         }
 
         static string GetGd32vw553Instructions()
@@ -148,7 +149,7 @@ namespace BK7231Flasher
                 "- PC8 / BOOT0 -> 3.3 V" + System.Environment.NewLine +
                 "- PB1 / BOOT1 -> GND if the target does not already hold BOOT1 low" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "With BOOT0 held high, reset the chip with RST/NRST or power-cycle the 3.3 V supply. Ensure that you connect to a single UART port (like RX0/TX0, and not RX1/TX2). Once the target is in UART download mode, start the read.";
+                "With BOOT0 held high, reset the chip with RST/NRST or power-cycle the 3.3 V supply. Ensure that you connect to a single UART port (like RX0/TX0, and not RX1/TX2). Once the target is in UART download mode, start the operation.";
         }
 
         static string GetRda5981Instructions()
@@ -159,7 +160,7 @@ namespace BK7231Flasher
                 "- Adapter GND -> target GND" + System.Environment.NewLine +
                 "- IO21 -> 3.3 V if the target does not enter UART download mode" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "Start the read first. While the tool is trying to connect, reset or power-cycle the device; if linking does not start, try again with IO21 pulled high.";
+                "Start the operation first. While the tool is trying to connect, reset or power-cycle the device; if linking does not start, try again with IO21 pulled high.";
         }
 
         static string GetTR6260Instructions()
@@ -170,7 +171,7 @@ namespace BK7231Flasher
                 "- Adapter GND -> target GND" + System.Environment.NewLine +
                 "- GPIO14 / TOUT2 / BT0 -> GND" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "With GPIO14 held low, power-cycle the 3.3 V supply. Once the target is in UART download mode, start the read.";
+                "With GPIO14 held low, power-cycle the 3.3 V supply. Once the target is in UART download mode, start the operation.";
         }
 
         static string GetXr806Instructions()
@@ -178,7 +179,7 @@ namespace BK7231Flasher
             return GetXrUart0Instructions(
                 "XR806",
                 "- PB02 -> GND",
-                "With PB02 held low, start the read operation first, reset the chip by pulling CHIP_PWD low and releasing it, then release PB02.");
+                "With PB02 held low, start the operation first, reset the chip by pulling CHIP_PWD low and releasing it, then release PB02.");
         }
 
         static string GetXrUart0TwoBootPinsInstructions(string platformName)
@@ -187,7 +188,7 @@ namespace BK7231Flasher
                 platformName,
                 "- PB02 -> GND" + System.Environment.NewLine +
                 "- PB03 -> GND",
-                "With PB02 and PB03 held low, start the read operation first, then reset the chip by pulling CHIP_PWD low and releasing it, or power-cycle the device.");
+                "With PB02 and PB03 held low, start the operation first, then reset the chip by pulling CHIP_PWD low and releasing it, or power-cycle the device.");
         }
 
         static string GetXrUart0Instructions(string platformName, string bootPinLines, string bootModeAction)
@@ -197,7 +198,7 @@ namespace BK7231Flasher
                 "- Adapter TX -> " + platformName + " RX0 (PB01)" + System.Environment.NewLine +
                 "- Adapter GND -> target GND" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "First try starting the read with the target running normally. The flasher will send the software 'upgrade' command at 115200 baud before attempting sync. This only works when the existing firmware has its UART console enabled and supports that command." + System.Environment.NewLine +
+                "First try starting the operation with the target running normally. The flasher will send the software 'upgrade' command at 115200 baud before attempting sync. This only works when the existing firmware has its UART console enabled and supports that command." + System.Environment.NewLine +
                 "If software entry does not work, use the hardware boot straps:" + System.Environment.NewLine +
                 bootPinLines + System.Environment.NewLine +
                 bootModeAction;
@@ -210,7 +211,7 @@ namespace BK7231Flasher
                 "- Adapter TX -> OPL1000 DBG RX (GPIO1)" + System.Environment.NewLine +
                 "- Adapter GND -> target GND" + System.Environment.NewLine +
                 GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "Start the read first. While the tool is trying to connect, reset or power-cycle the device.";
+                "Start the operation first. While the tool is trying to connect, reset or power-cycle the device.";
         }
 
         static string GetPowerAndGroundInstructions()
