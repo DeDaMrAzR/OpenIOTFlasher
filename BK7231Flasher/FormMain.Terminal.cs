@@ -10,6 +10,7 @@ namespace BK7231Flasher
 {
     public partial class FormMain : Form, ILogListener
     {
+		private ComboBox comboBoxTerminalColors;
 		private bool terminalReconnectWanted;
 		private bool terminalClosing;
 		private string terminalReconnectPort;
@@ -31,6 +32,33 @@ namespace BK7231Flasher
 
 		private void InitializeTerminalTab()
 		{
+			Color standardBackground = textBoxTerminalLog.BackColor;
+			Color standardForeground = textBoxTerminalLog.ForeColor;
+			comboBoxTerminalColors = new ComboBox
+			{
+				Name = "comboBoxTerminalColors",
+				AccessibleName = "Terminal colors",
+				DropDownStyle = ComboBoxStyle.DropDownList,
+				Location = new Point(checkBoxTerminalAutoScroll.Right + 8, comboBoxTerminalBaud.Top),
+				Size = new Size(190, comboBoxTerminalBaud.Height),
+				TabIndex = 9
+			};
+			comboBoxTerminalColors.Items.AddRange(new object[] {
+				"Standard", "Black / White text", "Black / Green text"
+			});
+			comboBoxTerminalColors.SelectedIndex = 0;
+			comboBoxTerminalColors.SelectedIndexChanged += (sender, e) => {
+				int selectionStart = textBoxTerminalLog.SelectionStart;
+				int selectionLength = textBoxTerminalLog.SelectionLength;
+				textBoxTerminalLog.BackColor = comboBoxTerminalColors.SelectedIndex == 0
+					? standardBackground : Color.Black;
+				textBoxTerminalLog.ForeColor = comboBoxTerminalColors.SelectedIndex == 0
+					? standardForeground : comboBoxTerminalColors.SelectedIndex == 1 ? Color.White : Color.Lime;
+				textBoxTerminalLog.SelectAll();
+				textBoxTerminalLog.SelectionColor = textBoxTerminalLog.ForeColor;
+				textBoxTerminalLog.Select(selectionStart, selectionLength);
+			};
+			tabPageTerminal.Controls.Add(comboBoxTerminalColors);
 			comboBoxTerminalLineEnding.SelectedIndex = 1;
 			ConfigureLogContextMenu(textBoxTerminalLog);
 			checkBoxTerminalAutoScroll.CheckedChanged += (sender, e) => {
@@ -612,7 +640,7 @@ namespace BK7231Flasher
 							RichTextUtil.AppendText(
 								textBoxTerminalLog,
 								text,
-								color,
+								comboBoxTerminalColors.SelectedIndex == 0 ? color : textBoxTerminalLog.ForeColor,
 								checkBoxTerminalAutoScroll.Checked);
                     });
                 }
@@ -625,7 +653,7 @@ namespace BK7231Flasher
 			RichTextUtil.AppendText(
 				textBoxTerminalLog,
 				text,
-				color,
+				comboBoxTerminalColors.SelectedIndex == 0 ? color : textBoxTerminalLog.ForeColor,
 				checkBoxTerminalAutoScroll.Checked);
         }
     }
