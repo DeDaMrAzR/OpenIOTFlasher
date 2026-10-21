@@ -177,6 +177,7 @@ namespace BK7231Flasher
             this.tabDecryption = new System.Windows.Forms.TabPage();
             this.chkSkipDecrc = new System.Windows.Forms.CheckBox();
             this.btnLoadDefaultNPartitions = new System.Windows.Forms.Button();
+            this.btnCopyPartitions = new System.Windows.Forms.Button();
             this.dgPartitions = new System.Windows.Forms.DataGridView();
             this.dgName = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.dgType = new System.Windows.Forms.DataGridViewTextBoxColumn();
@@ -1812,6 +1813,7 @@ namespace BK7231Flasher
             // 
             this.tabDecryption.Controls.Add(this.chkSkipDecrc);
             this.tabDecryption.Controls.Add(this.btnLoadDefaultNPartitions);
+            this.tabDecryption.Controls.Add(this.btnCopyPartitions);
             this.tabDecryption.Controls.Add(this.dgPartitions);
             this.tabDecryption.Controls.Add(this.btnLoadPartitions);
             this.tabDecryption.Controls.Add(this.btnEncryptN1013Bootloader);
@@ -1859,6 +1861,17 @@ namespace BK7231Flasher
             this.btnLoadDefaultNPartitions.UseVisualStyleBackColor = true;
             this.btnLoadDefaultNPartitions.Click += new System.EventHandler(this.OnBtnLoadDefaultNPartitionsClick);
             // 
+            // btnCopyPartitions
+            //
+            this.btnCopyPartitions.Enabled = false;
+            this.btnCopyPartitions.Location = new System.Drawing.Point(618, 36);
+            this.btnCopyPartitions.Name = "btnCopyPartitions";
+            this.btnCopyPartitions.Size = new System.Drawing.Size(112, 23);
+            this.btnCopyPartitions.TabIndex = 22;
+            this.btnCopyPartitions.Text = "Copy partitions";
+            this.btnCopyPartitions.UseVisualStyleBackColor = true;
+            this.btnCopyPartitions.Click += new System.EventHandler(this.OnBtnCopyPartitionsClick);
+            //
             // dgPartitions
             // 
             this.dgPartitions.AllowUserToOrderColumns = true;
@@ -1878,6 +1891,8 @@ namespace BK7231Flasher
             this.dgPartitions.ScrollBars = System.Windows.Forms.ScrollBars.None;
             this.dgPartitions.Size = new System.Drawing.Size(552, 136);
             this.dgPartitions.TabIndex = 19;
+            this.dgPartitions.RowsAdded += new System.Windows.Forms.DataGridViewRowsAddedEventHandler(this.OnPartitionRowsChanged);
+            this.dgPartitions.RowsRemoved += new System.Windows.Forms.DataGridViewRowsRemovedEventHandler(this.OnPartitionRowsChanged);
             // 
             // dgName
             // 
@@ -2633,6 +2648,7 @@ namespace BK7231Flasher
         private System.Windows.Forms.DataGridViewTextBoxColumn dgAddress;
         private System.Windows.Forms.DataGridViewTextBoxColumn dgLength;
         private System.Windows.Forms.Button btnLoadDefaultNPartitions;
+        private System.Windows.Forms.Button btnCopyPartitions;
         private System.Windows.Forms.CheckBox chkSkipDecrc;
 		private System.Windows.Forms.CheckBox chkUseCompression;
         private System.Windows.Forms.TabPage tabPageTerminal;

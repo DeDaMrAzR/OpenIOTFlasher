@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Globalization;
+using System.Text;
 using System.Windows.Forms;
 
 namespace BK7231Flasher
@@ -335,6 +336,38 @@ namespace BK7231Flasher
 			File.WriteAllBytes(name, crc);
 
 			AddDecryptionLogLine(name, Color.Green);
+		}
+
+		private void OnPartitionRowsChanged(object sender, EventArgs e)
+		{
+			btnCopyPartitions.Enabled = dgPartitions.Rows.Cast<DataGridViewRow>().Any(row => !row.IsNewRow);
+		}
+
+		private void OnBtnCopyPartitionsClick(object sender, EventArgs e)
+		{
+			if(!dgPartitions.EndEdit())
+				return;
+			var rows = dgPartitions.Rows.Cast<DataGridViewRow>().Where(row => !row.IsNewRow).ToArray();
+			if(rows.Length == 0)
+				return;
+			var columns = dgPartitions.Columns.Cast<DataGridViewColumn>()
+				.Where(column => column.Visible).OrderBy(column => column.DisplayIndex).ToArray();
+			var text = new StringBuilder(string.Join("\t", columns.Select(column => column.HeaderText)));
+			foreach(var row in rows)
+			{
+				text.AppendLine();
+				text.Append(string.Join("\t", columns.Select(column =>
+					(Convert.ToString(row.Cells[column.Index].FormattedValue) ?? string.Empty)
+					.Replace("\t", " ").Replace("\r", " ").Replace("\n", " "))));
+			}
+			try
+			{
+				Clipboard.SetText(text.ToString());
+			}
+			catch(Exception ex)
+			{
+				MessageBox.Show("Failed to copy to clipboard: " + ex.Message, "Clipboard error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+			}
 		}
 
 		private void OnBtnLoadPartitionsClick(object sender, EventArgs e)
