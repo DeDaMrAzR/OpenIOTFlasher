@@ -133,7 +133,7 @@
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.Name = "FormPin";
-            this.Text = "FormPin";
+            this.Text = "Pin configuration";
             this.Load += new System.EventHandler(this.FormPin_Load);
             this.ResumeLayout(false);
             this.PerformLayout();

@@ -639,7 +639,7 @@
             this.Controls.Add(this.menuStrip1);
             this.MainMenuStrip = this.menuStrip1;
             this.Name = "FormOBKConfig";
-            this.Text = "FormOBKConfig";
+            this.Text = "OpenBeken configuration";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.FormOBKConfig_FormClosing);
             this.Load += new System.EventHandler(this.FormOBKConfig_Load);
             this.DragDrop += new System.Windows.Forms.DragEventHandler(this.FormOBKConfig_DragDrop);
