@@ -11,6 +11,8 @@ namespace BK7231Flasher
     public partial class FormMain : Form, ILogListener
     {
 		private ComboBox comboBoxTerminalColors;
+		private readonly List<KeyValuePair<string, Color>> terminalPendingOutput = new List<KeyValuePair<string, Color>>();
+		private bool terminalFlushingOutput;
 		private bool terminalReconnectWanted;
 		private bool terminalClosing;
 		private string terminalReconnectPort;
@@ -32,6 +34,11 @@ namespace BK7231Flasher
 
 		private void InitializeTerminalTab()
 		{
+			Font currentFont = textBoxTerminalLog.Font;
+			Font terminalFont = new Font("Consolas", currentFont.Size, currentFont.Style,
+				currentFont.Unit, currentFont.GdiCharSet, currentFont.GdiVerticalFont);
+			textBoxTerminalLog.Font = terminalFont;
+			textBoxTerminalLog.Disposed += (sender, e) => terminalFont.Dispose();
 			Color standardBackground = textBoxTerminalLog.BackColor;
 			Color standardForeground = textBoxTerminalLog.ForeColor;
 			comboBoxTerminalColors = new ComboBox
@@ -61,9 +68,18 @@ namespace BK7231Flasher
 			tabPageTerminal.Controls.Add(comboBoxTerminalColors);
 			comboBoxTerminalLineEnding.SelectedIndex = 1;
 			ConfigureLogContextMenu(textBoxTerminalLog);
+			textBoxTerminalLog.MouseCaptureChanged += (sender, e) => {
+				if (!terminalFlushingOutput && terminalPendingOutput.Count != 0
+					&& !textBoxTerminalLog.Capture && textBoxTerminalLog.IsHandleCreated
+					&& !textBoxTerminalLog.IsDisposed && !terminalClosing)
+					textBoxTerminalLog.BeginInvoke((MethodInvoker)FlushTerminalOutput);
+			};
 			checkBoxTerminalAutoScroll.CheckedChanged += (sender, e) => {
 				if (checkBoxTerminalAutoScroll.Checked)
+				{
+					FlushTerminalOutput();
 					RichTextUtil.ScrollToBottom(textBoxTerminalLog);
+				}
 			};
 		}
 
@@ -84,6 +100,7 @@ namespace BK7231Flasher
 
 		private void ButtonTerminalClear_Click(object sender, EventArgs e)
 		{
+			terminalPendingOutput.Clear();
 			textBoxTerminalLog.Clear();
 		}
 
@@ -636,12 +653,8 @@ namespace BK7231Flasher
                 {
                     textBoxTerminalLog.BeginInvoke((MethodInvoker)delegate
                     {
-                        if (!textBoxTerminalLog.IsDisposed)
-							RichTextUtil.AppendText(
-								textBoxTerminalLog,
-								text,
-								comboBoxTerminalColors.SelectedIndex == 0 ? color : textBoxTerminalLog.ForeColor,
-								checkBoxTerminalAutoScroll.Checked);
+						if (!textBoxTerminalLog.IsDisposed)
+							AppendTerminalText(text, color);
                     });
                 }
                 catch (InvalidOperationException)
@@ -650,11 +663,35 @@ namespace BK7231Flasher
                 return;
             }
 
-			RichTextUtil.AppendText(
-				textBoxTerminalLog,
-				text,
-				comboBoxTerminalColors.SelectedIndex == 0 ? color : textBoxTerminalLog.ForeColor,
-				checkBoxTerminalAutoScroll.Checked);
+			terminalPendingOutput.Add(new KeyValuePair<string, Color>(text, color));
+			FlushTerminalOutput();
         }
+
+		private void FlushTerminalOutput()
+		{
+			if (terminalFlushingOutput || terminalPendingOutput.Count == 0
+				|| textBoxTerminalLog.IsDisposed || terminalClosing)
+				return;
+			if (!checkBoxTerminalAutoScroll.Checked && textBoxTerminalLog.Capture)
+				return;
+
+			terminalFlushingOutput = true;
+			try
+			{
+				foreach (KeyValuePair<string, Color> output in terminalPendingOutput)
+				{
+					RichTextUtil.AppendText(
+						textBoxTerminalLog,
+						output.Key,
+						comboBoxTerminalColors.SelectedIndex == 0 ? output.Value : textBoxTerminalLog.ForeColor,
+						checkBoxTerminalAutoScroll.Checked);
+				}
+				terminalPendingOutput.Clear();
+			}
+			finally
+			{
+				terminalFlushingOutput = false;
+			}
+		}
     }
 }
