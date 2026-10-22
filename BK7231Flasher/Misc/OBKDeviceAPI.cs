@@ -523,14 +523,14 @@ namespace BK7231Flasher
             {
                 if (userName.Length > 0)
                 {
-                    r += "user=" + userName + "&";
+                    r += "user=" + Uri.EscapeDataString(userName) + "&";
                 }
             }
             if (password != null)
             {
                 if (password.Length > 0)
                 {
-                    r += "password=" + password + "&";
+                    r += "password=" + Uri.EscapeDataString(password) + "&";
                 }
             }
             r += "cmnd=";
