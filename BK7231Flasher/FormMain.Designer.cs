@@ -1467,6 +1467,7 @@ namespace BK7231Flasher
             this.comboBoxIP.FormattingEnabled = true;
             this.comboBoxIP.Location = new System.Drawing.Point(35, 48);
             this.comboBoxIP.Name = "comboBoxIP";
+            this.comboBoxIP.TextChanged += new System.EventHandler(this.invalidateIPDevice);
             this.comboBoxIP.Size = new System.Drawing.Size(177, 21);
             this.comboBoxIP.TabIndex = 8;
             // 

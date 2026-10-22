@@ -13,25 +13,59 @@ namespace BK7231Flasher
         string ipOperationResultKind;
         string ipDownloadOperationKind;
 
+        int ipDownloadGeneration;
+
+        void invalidateIPDevice(object sender, EventArgs e)
+        {
+            dev = null;
+            ipDownloadGeneration++;
+            ipOperationResult = null;
+            ipOperationResultLen = 0;
+            ipOperationResultKind = null;
+            buttonIPSaveResultToFile.Enabled = false;
+            setIPDeviceButtonsState(false);
+            labelCheckCommunicationStatus.Text = "Check communication with this address first.";
+            labelIPOperationStatus.Text = "";
+        }
+        void postIPDeviceUpdate(OBKDeviceAPI source, MethodInvoker action)
+        {
+            if (IsDisposed || Disposing || !IsHandleCreated)
+                return;
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate {
+                    if (!IsDisposed && !Disposing && ReferenceEquals(dev, source))
+                        action();
+                });
+            }
+            catch (InvalidOperationException) { }
+        }
         public void onGetInfoReply(OBKDeviceAPI self)
         {
-            Singleton.textBoxLog.Invoke((MethodInvoker)delegate {
-                if(self.getInfoFailed())
+            postIPDeviceUpdate(self, delegate {
+                try
                 {
-                    labelCheckCommunicationStatus.Text = "Failed to get reply." + Environment.NewLine;
-                    setIPDeviceButtonsState(false);
+                    if (self.getInfoFailed())
+                    {
+                        labelCheckCommunicationStatus.Text = "Failed to get reply." + Environment.NewLine;
+                        setIPDeviceButtonsState(false);
+                    }
+                    else
+                    {
+                        labelCheckCommunicationStatus.Text = " success!" + Environment.NewLine + self.getInfoText();
+                        setIPDeviceButtonsState(true);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    labelCheckCommunicationStatus.Text = " success!" + Environment.NewLine;
-                    labelCheckCommunicationStatus.Text += self.getInfoText();
-                    setIPDeviceButtonsState(true);
+                    invalidateIPDevice(null, EventArgs.Empty);
+                    labelCheckCommunicationStatus.Text = "Failed to read reply: " + ex.Message;
                 }
-
             });
         }
         private void buttonCheckCommunication_Click(object sender, EventArgs e)
         {
+            invalidateIPDevice(sender, e);
             IPAddress tg;
             bool bOk = IPAddress.TryParse(comboBoxIP.Text, out tg);
             if (bOk)
@@ -50,6 +84,11 @@ namespace BK7231Flasher
         }
         bool checkIsIPOBKDeviceAndShowError()
         {
+            if (dev == null)
+            {
+                MessageBox.Show("Check communication with this address first.");
+                return false;
+            }
             BKType type = dev.getBKType();
             if (type == BKType.Invalid)
             {
@@ -67,10 +106,24 @@ namespace BK7231Flasher
             }
             // this is BK7231!
             setupDownloadOperationProgressBar("Downloading OBK CFG dump...");
-            dev.sendGetFlashChunk_OBKConfig(onOBKConfigDownloaded, onOBKConfigProgress);
+            OBKDeviceAPI target = dev;
+            int generation = ipDownloadGeneration;
+            target.sendGetFlashChunk_OBKConfig(
+                (data, len) => postIPDeviceUpdate(target, delegate {
+                    if (generation == ipDownloadGeneration)
+                        onOBKConfigDownloaded(data, len);
+                }),
+                (done, total) => postIPDeviceUpdate(target, delegate {
+                    if (generation == ipDownloadGeneration)
+                        onOBKConfigProgress(done, total);
+                }));
         }
         void setupDownloadOperationProgressBar(string opStr)
         {
+            ipDownloadGeneration++;
+            ipOperationResult = null;
+            ipOperationResultLen = 0;
+            buttonIPSaveResultToFile.Enabled = false;
             ipDownloadOperationKind = opStr;
             updateIPOperationStatus(" starting...");
         }
@@ -167,7 +220,17 @@ namespace BK7231Flasher
             }
             // this is BK7231!
             setupDownloadOperationProgressBar("Downloading Tuya CFG dump from OBK device...");
-            dev.sendGetFlashChunk_TuyaCFGFromOBKDevice(onTuyaConfigDownloaded, onTuyaConfigProgress);
+            OBKDeviceAPI target = dev;
+            int generation = ipDownloadGeneration;
+            target.sendGetFlashChunk_TuyaCFGFromOBKDevice(
+                (data, len) => postIPDeviceUpdate(target, delegate {
+                    if (generation == ipDownloadGeneration)
+                        onTuyaConfigDownloaded(data, len);
+                }),
+                (done, total) => postIPDeviceUpdate(target, delegate {
+                    if (generation == ipDownloadGeneration)
+                        onTuyaConfigProgress(done, total);
+                }));
         }
 
 
