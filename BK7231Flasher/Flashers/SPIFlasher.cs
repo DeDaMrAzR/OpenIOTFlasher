@@ -221,9 +221,21 @@ namespace BK7231Flasher
             }
             return true;
         }
+        bool isValidFlashRange(uint address, long length)
+        {
+            return length > 0 && flashSize > 0
+                && (ulong)address + (ulong)length <= (ulong)flashSize
+                && (ulong)address + (ulong)length <= 0x1000000UL;
+        }
         public bool EraseFlash(uint ofs, int len)
         {
             const int sectorSize = 4096;
+            long eraseLength = ((long)len + sectorSize - 1) / sectorSize * sectorSize;
+            if (ofs % sectorSize != 0 || !isValidFlashRange(ofs, eraseLength))
+            {
+                addErrorLine("SPI erase range is unaligned or outside the flash/address bounds.");
+                return false;
+            }
             byte[] cmd = new byte[4];
 
             addLogLine("Starting flash erase, ofs 0x" + ofs.ToString("X") + ", len 0x" + len.ToString("X"));
@@ -257,6 +269,11 @@ namespace BK7231Flasher
 
         public bool WriteFlash(uint ofs, int len, byte[] buffer)
         {
+            if (buffer == null || len > buffer.Length || !isValidFlashRange(ofs, len))
+            {
+                addErrorLine("SPI write buffer or range is invalid.");
+                return false;
+            }
             const int pageSize = 256;
             addLogLine("Starting flash write, ofs 0x" + ofs.ToString("X") + ", len 0x" + len.ToString("X"));
 
@@ -659,6 +676,37 @@ namespace BK7231Flasher
             {
                 return;
             }
+            if(string.IsNullOrEmpty(sourceFileName))
+            {
+                addLogLine("No filename given!");
+                return;
+            }
+            addLogLine("Reading " + sourceFileName + "...");
+            byte[] x = File.ReadAllBytes(sourceFileName);
+            if (x.Length == 0)
+            {
+                addErrorLine("Source file is empty.");
+                return;
+            }
+            // In CH341 SPI modes this inherited parameter is a byte offset.
+            uint writeOffset = (uint)startSector;
+            int eraseLen = x.Length;
+            if(bCustomWriteMode)
+            {
+                long requestedLen = (long)sectors * BK7231Flasher.SECTOR_SIZE;
+                if(requestedLen <= 0 || requestedLen > int.MaxValue || x.Length > requestedLen)
+                {
+                    addErrorLine("Custom write length is invalid or smaller than the source file.");
+                    return;
+                }
+                eraseLen = (int)requestedLen;
+            }
+            long roundedEraseLength = ((long)eraseLen + 4095) / 4096 * 4096;
+            if (writeOffset % 4096 != 0 || !isValidFlashRange(writeOffset, roundedEraseLength))
+            {
+                addErrorLine("SPI write/erase range is unaligned or outside the flash/address bounds.");
+                return;
+            }
             if (rwMode == WriteMode.ReadAndWrite)
             {
                 doReadInternal(0, flashSize);
@@ -668,27 +716,6 @@ namespace BK7231Flasher
             if (UnprotectFlash() == false)
             {
                 return;
-            }
-            if(string.IsNullOrEmpty(sourceFileName))
-            {
-                addLogLine("No filename given!");
-                return;
-            }
-            addLogLine("Reading " + sourceFileName + "...");
-            byte[] x = File.ReadAllBytes(sourceFileName);
-            // In CH341 SPI modes this inherited parameter is a byte offset.
-            uint writeOffset = (uint)startSector;
-            int eraseLen = x.Length;
-            if(bCustomWriteMode && sectors > 0)
-            {
-                int requestedLen = sectors * BK7231Flasher.SECTOR_SIZE;
-                if(x.Length > requestedLen)
-                {
-                    addErrorLine("Source file length 0x" + x.Length.ToString("X")
-                        + " exceeds requested custom write length 0x" + requestedLen.ToString("X") + ".");
-                    return;
-                }
-                eraseLen = requestedLen;
             }
             addLogLine("Starting SPI write at offset 0x" + writeOffset.ToString("X")
                 + ", erase length 0x" + eraseLen.ToString("X") + ".");
