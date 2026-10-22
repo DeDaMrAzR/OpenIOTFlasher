@@ -54,6 +54,7 @@ namespace BK7231Flasher
         internal void beginBackupThread()
         {
             thread = new Thread(workerThread);
+            thread.IsBackground = true;
             thread.Start();
         }
         int beginDownload()
@@ -281,7 +282,13 @@ namespace BK7231Flasher
             deviceDirName += "_" + dev.getMACLast3BytesText();
             // remove ws
             deviceDirName = deviceDirName.Replace(" ", "");
+            foreach (char invalid in Path.GetInvalidFileNameChars())
+                deviceDirName = deviceDirName.Replace(invalid, '_');
             deviceDirectory = Path.Combine(baseDir, deviceDirName);
+            string originalDirectory = deviceDirectory;
+            int duplicate = 1;
+            while (Directory.Exists(deviceDirectory) || File.Exists(deviceDirectory))
+                deviceDirectory = originalDirectory + "_" + duplicate++;
             Directory.CreateDirectory(deviceDirectory);
             File.WriteAllText(Path.Combine(deviceDirectory, deviceDirName + ".txt"), dev.getInfoText());
             if(dev.isTasmota())
@@ -293,23 +300,40 @@ namespace BK7231Flasher
                 processDeviceOBK(index);
             }
         }
+        void reportBackupError(string message, Exception ex)
+        {
+            stat_totalErrors++;
+            string text = message + ": " + ex.Message;
+            Console.WriteLine(text);
+            try { onProgress?.Invoke(text); }
+            catch (Exception callbackError) { Console.WriteLine("Backup progress error: " + callbackError.Message); }
+        }
         void workerThread()
         {
             stat_totalErrors = 0;
             stat_totalRetriesDone = 0;
-            baseDir = DEFAULT_BASE_DIR;
-            Directory.CreateDirectory(baseDir);
-            baseDir = Path.Combine(baseDir, "backup_" + MiscUtils.formatDateNowFileNameBase());
-            Directory.CreateDirectory(baseDir);
+            try
+            {
+                baseDir = DEFAULT_BASE_DIR;
+                Directory.CreateDirectory(baseDir);
+                baseDir = Path.Combine(baseDir, "backup_" + MiscUtils.formatDateNowFileNameBase());
+                Directory.CreateDirectory(baseDir);
 
-            for (int i = 0; i < devices.Count; i++)
-            {
-                processDevice(i);
+                for (int i = 0; i < devices.Count; i++)
+                {
+                    try { processDevice(i); }
+                    catch (Exception ex) { reportBackupError("Failed to back up device " + (i + 1), ex); }
+                }
             }
-            Console.WriteLine("Total backup finished with " + stat_totalRetriesDone + " extra retries.");
-            if (onFinished != null)
+            catch (Exception ex)
             {
-                onFinished(stat_totalErrors,stat_totalRetriesDone);
+                reportBackupError("Mass backup failed", ex);
+            }
+            finally
+            {
+                Console.WriteLine("Total backup finished with " + stat_totalRetriesDone + " extra retries.");
+                try { onFinished?.Invoke(stat_totalErrors, stat_totalRetriesDone); }
+                catch (Exception ex) { Console.WriteLine("Backup completion error: " + ex.Message); }
             }
         }
     }

@@ -3115,15 +3115,28 @@ namespace BK7231Flasher
         private void onMassBackupFinish(int totalErrors, int totalRetries)
         {
             onMassBackupProgress("Complete. Errors: " + totalErrors + "; retries: " + totalRetries + ".");
-            Singleton.labelMassBackupProgress.Invoke((MethodInvoker)delegate {
+            postMassBackupUpdate(delegate {
                 buttonStartMassBackup.Enabled = true;
             });
         }
         private void onMassBackupProgress(string txt)
         {
-            Singleton.labelMassBackupProgress.Invoke((MethodInvoker)delegate {
+            postMassBackupUpdate(delegate {
                 labelMassBackupProgress.Text = "Status: " + txt;
             });
+        }
+        private void postMassBackupUpdate(MethodInvoker update)
+        {
+            if (IsDisposed || Disposing || !IsHandleCreated)
+                return;
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate {
+                    if (!IsDisposed && !Disposing)
+                        update();
+                });
+            }
+            catch (InvalidOperationException) { }
         }
 
         private void textBoxIPScannerUser_TextChanged(object sender, EventArgs e)
