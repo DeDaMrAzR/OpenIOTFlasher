@@ -153,6 +153,9 @@ namespace BK7231Flasher
         }
         private int saveIPBinaryResultTo(string filePath)
         {
+            if (ipOperationResult == null || ipOperationResultLen <= 0
+                || ipOperationResultLen != ipOperationResult.Length)
+                return 0;
             using (FileStream fs = new FileStream(filePath, FileMode.Create))
             {
                 fs.Write(ipOperationResult, 0, ipOperationResultLen);
@@ -179,6 +182,11 @@ namespace BK7231Flasher
         }
         private void handleGenericProgressFinish(byte [] data, int len, string kind)
         {
+            if (data == null || len <= 0 || len != data.Length)
+            {
+                data = null;
+                len = 0;
+            }
             this.ipOperationResult = data;
             this.ipOperationResultLen = len;
             this.ipOperationResultKind = kind;
@@ -236,7 +244,7 @@ namespace BK7231Flasher
 
         void setIPDeviceButtonsState(bool b)
         {
-            buttonIPCFGDump.Enabled = b;
+            buttonIPCFGDump.Enabled = b && dev != null && OBKFlashLayout.hasConfigLocation(dev.getBKType());
             buttonIPDump2MB.Enabled = b;
             buttonIPDownloadTuyaConfig.Enabled = b;
         }

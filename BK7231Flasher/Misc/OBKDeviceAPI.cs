@@ -633,12 +633,17 @@ namespace BK7231Flasher
             GetFlashChunkArguments arg = obj as GetFlashChunkArguments;
             int size = arg.size;
             int adr = arg.adr;
+            if (adr < 0 || size <= 0 || (long)adr + size > int.MaxValue)
+            {
+                arg.cb?.Invoke(null, 0);
+                return;
+            }
             int end = adr + size;
             int step = 4096;
             MemoryStream res = new MemoryStream();
             BinaryWriter bw = new BinaryWriter(res);
             int maxAttempts = 10;
-            for(int ofs = adr; ofs < end; ofs += step)
+            for(int ofs = adr; ofs < end; ofs += Math.Min(step, end - ofs))
             {
                 int nowLen = end - ofs;
                 if (nowLen > step)
