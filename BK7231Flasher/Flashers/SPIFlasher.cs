@@ -709,9 +709,30 @@ namespace BK7231Flasher
             }
             if (rwMode == WriteMode.ReadAndWrite)
             {
-                doReadInternal(0, flashSize);
-				if (finalReadbackVerification.HasValue && ms == null)
-					return;
+                if (!isValidFlashRange(0, flashSize))
+                {
+                    addErrorLine("Full SPI backup exceeds the supported address range.");
+                    return;
+                }
+                try
+                {
+                    doReadInternal(0, flashSize);
+                    if (ms == null || ms.Length != flashSize)
+                    {
+                        addErrorLine("Full SPI backup failed or was incomplete; flash was not modified.");
+                        return;
+                    }
+                    if (!saveReadResult(0))
+                    {
+                        addErrorLine("SPI backup could not be saved; flash was not modified.");
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    addErrorLine("SPI backup failed: " + ex.Message);
+                    return;
+                }
             }
             if (UnprotectFlash() == false)
             {
