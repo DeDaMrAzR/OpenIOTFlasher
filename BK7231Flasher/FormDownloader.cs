@@ -12,7 +12,9 @@ namespace BK7231Flasher
 {
     public partial class FormDownloader : Form
     {
-        static FormDownloader Singleton;
+        volatile bool closing;
+        readonly object requestLock = new object();
+        WebRequest activeRequest;
         Thread worker;
         FormMain fm;
         string list_url = "https://github.com/openshwprojects/OpenBK7231T_App/releases";
@@ -23,7 +25,6 @@ namespace BK7231Flasher
 
         public FormDownloader(FormMain formMain, BKType bkType)
         {
-            Singleton = this;
             this.fm = formMain;
             this.bkType = bkType;
             InitializeComponent();
@@ -36,11 +37,12 @@ namespace BK7231Flasher
         void startDownloaderThread()
         {
             worker = new Thread(new ThreadStart(downloadThread));
+            worker.IsBackground = true;
             worker.Start();
         }
         public void setState(string ss, Color c)
         {
-            Singleton.progressBar1.Invoke((MethodInvoker)delegate {
+            postToUi(delegate {
                 // Running on the UI thread
                 labelState.Text = ss;
                 labelState.BackColor = c;
@@ -48,7 +50,7 @@ namespace BK7231Flasher
         }
         public void setProgress(int cur, int max)
         {
-            Singleton.progressBar1.Invoke((MethodInvoker)delegate {
+            postToUi(delegate {
                 // Running on the UI thread
                 progressBar1.Maximum = max;
                 progressBar1.Value = cur;
@@ -62,6 +64,8 @@ namespace BK7231Flasher
             }
             catch (Exception ex)
             {
+                if (closing)
+                    return;
                 setState("Exception!", Color.Red);
                 setState(ex.ToString(), Color.Red);
                 addLog("It's possible that your system does not support Secure Protocol needed by github.", Color.Red);
@@ -76,11 +80,13 @@ namespace BK7231Flasher
         void doDownloadInternal() {
             setState("Checking latest OpenBeken release...", Color.Transparent);
             Thread.Sleep(200);
+            if (closing)
+                return;
             addLog("Target platform: " + bkType);
 
 
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-            WebClient webClient = new WebClient();
+            using WebClient webClient = new TrackedWebClient(registerRequest);
             webClient.DownloadProgressChanged += (s, e) =>
             {
                 if (e.TotalBytesToReceive > 0)
@@ -96,6 +102,8 @@ namespace BK7231Flasher
             string tagName;
             HashSet<string> uartFlashFileNames;
             List<FirmwareAsset> releaseAssets = getLatestReleaseAssets(webClient, out tagName, out uartFlashFileNames);
+            if (closing)
+                return;
             if (releaseAssets.Count <= 0)
             {
                 setState("Failed to find release assets!", Color.Red);
@@ -429,9 +437,16 @@ namespace BK7231Flasher
                 return defaultAsset;
 
             FirmwareAsset selected = null;
-            Singleton.Invoke((MethodInvoker)delegate {
-                selected = chooseFirmwareAssetOnUiThread(candidates, defaultAsset);
-            });
+            if (closing)
+                return null;
+            try
+            {
+                Invoke((MethodInvoker)delegate {
+                    if (!closing && !IsDisposed && !Disposing)
+                        selected = chooseFirmwareAssetOnUiThread(candidates, defaultAsset);
+                });
+            }
+            catch (InvalidOperationException) { return null; }
             return selected;
         }
         FirmwareAsset chooseFirmwareAssetOnUiThread(List<FirmwareAsset> candidates, FirmwareAsset defaultAsset)
@@ -607,10 +622,59 @@ namespace BK7231Flasher
         }
         public void addLog(string s, Color col)
         {
-            Singleton.richTextBoxLog.Invoke((MethodInvoker)delegate {
+            postToUi(delegate {
                 // Running on the UI thread
-                RichTextUtil.AppendText(Singleton.richTextBoxLog, s + Environment.NewLine, col);
+                RichTextUtil.AppendText(richTextBoxLog, s + Environment.NewLine, col);
             });
+        }
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            base.OnFormClosing(e);
+            if (e.Cancel)
+                return;
+            WebRequest request;
+            lock (requestLock)
+            {
+                closing = true;
+                request = activeRequest;
+            }
+            request?.Abort();
+        }
+        void postToUi(MethodInvoker action)
+        {
+            if (closing || IsDisposed || Disposing || !IsHandleCreated)
+                return;
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate {
+                    if (!closing && !IsDisposed && !Disposing)
+                        action();
+                });
+            }
+            catch (InvalidOperationException) { }
+        }
+        void registerRequest(WebRequest request)
+        {
+            lock (requestLock)
+            {
+                if (closing)
+                    throw new WebException("Download cancelled.", WebExceptionStatus.RequestCanceled);
+                activeRequest = request;
+            }
+        }
+        class TrackedWebClient : WebClient
+        {
+            readonly Action<WebRequest> registerRequest;
+            public TrackedWebClient(Action<WebRequest> registerRequest)
+            {
+                this.registerRequest = registerRequest;
+            }
+            protected override WebRequest GetWebRequest(Uri address)
+            {
+                WebRequest request = base.GetWebRequest(address);
+                registerRequest(request);
+                return request;
+            }
         }
         string pickQuotedString(string buffer, int at)
         {
