@@ -18,6 +18,10 @@ namespace BK7231Flasher
 
         public string SecondaryId { get; }
 
+        public uint? DeviceId { get; }
+
+        public string DeviceName { get; }
+
         public bool FriendlyNameFromSecondaryId { get; }
 
         public bool HasChipId => string.IsNullOrEmpty(NormalizedId) == false;
@@ -27,7 +31,7 @@ namespace BK7231Flasher
         public bool IsKnown => string.Equals(FriendlyName, "unknown", StringComparison.OrdinalIgnoreCase) == false;
 
         public BKChipIdentityResult(int? registerAddress, byte[] rawBytes, string normalizedId, string friendlyName, BKType[] matchingTypes,
-            string secondaryId = null, bool friendlyNameFromSecondaryId = false)
+            string secondaryId = null, bool friendlyNameFromSecondaryId = false, uint? deviceId = null, string deviceName = null)
         {
             RegisterAddress = registerAddress;
             RawBytes = rawBytes ?? Array.Empty<byte>();
@@ -35,6 +39,8 @@ namespace BK7231Flasher
             FriendlyName = string.IsNullOrWhiteSpace(friendlyName) ? "unknown" : friendlyName;
             MatchingTypes = matchingTypes ?? Array.Empty<BKType>();
             SecondaryId = secondaryId;
+            DeviceId = deviceId;
+            DeviceName = deviceName;
             FriendlyNameFromSecondaryId = friendlyNameFromSecondaryId;
         }
 
@@ -106,8 +112,33 @@ namespace BK7231Flasher
     internal static class BKChipIdentity
     {
         private const int SctrlChipIdRegister = 0x800000;
+        private const int SctrlDeviceIdRegister = SctrlChipIdRegister + 4;
         private const int SysVersionIdRegister = 0x44010004;
         private const int AonRevisionIdRegister = 0x440001F0;
+
+        private static readonly Dictionary<uint, string> KnownDeviceIds =
+            new Dictionary<uint, string>
+            {
+                // see sys_ctrl.h
+                { 0x20150414, "DEFAULT" },
+                { 0x20521023, "BK7231N_A" },
+                { 0x20521024, "BK7231N_B" },
+                { 0x20521025, "BK7231N_C" },
+                { 0x20521026, "BK7231N_D" },
+                { 0x20521027, "BK7231N_E" },
+                { 0x20521028, "BK7231N_F" },
+                { 0x20521029, "BK7231N_G" },
+                { 0x20521010, "BK7231N_N" },
+                { 0x20521011, "BK7231N_O" },
+                { 0x20A21020, "BK7231N_P" },
+                { 0x20A21021, "BK7231N_P_B" },
+                { 0x18221020, "BK7251_A" },
+                { 0x18521020, "BK7231U_A" },
+                { 0x21128000, "BK7238_MPW" },
+                { 0x22068000, "BK7238_A" },
+                { 0x23A18000, "BK7252N_MPW" },
+                { 0x24318000, "BK7252N_MP" },
+            };
 
         // Only keep IDs here that we have evidence can come back from CMD_ReadReg chip-ID probes.
         // BK7231T/BK7231U/BK7252 modes are intentionally left out because this tool does not
@@ -171,9 +202,40 @@ namespace BK7231Flasher
             BKChipIdentityResult result = DetectForAddresses(GetCandidateRegisterAddresses(selectedType), readRegister);
             if (string.Equals(result.NormalizedId, "7236", StringComparison.OrdinalIgnoreCase))
             {
-                result = Refine7236Family(result, readRegister);
+                return Refine7236Family(result, readRegister);
             }
-            return result;
+
+            return ReadLegacyDeviceId(result, readRegister);
+        }
+
+        private static BKChipIdentityResult ReadLegacyDeviceId(BKChipIdentityResult primary, Func<int, byte[]> readRegister)
+        {
+            byte[] rawBytes = readRegister(SctrlDeviceIdRegister);
+            uint? deviceId = NormalizeDeviceId(rawBytes);
+            if (!deviceId.HasValue)
+            {
+                return primary;
+            }
+
+            KnownDeviceIds.TryGetValue(deviceId.Value, out var deviceName);
+
+            return new BKChipIdentityResult(primary.RegisterAddress, primary.RawBytes, primary.NormalizedId,
+                primary.FriendlyName, primary.MatchingTypes, primary.SecondaryId,
+                primary.FriendlyNameFromSecondaryId, deviceId, deviceName ?? "unknown");
+        }
+
+        private static uint? NormalizeDeviceId(byte[] rawBytes)
+        {
+            if (rawBytes == null || rawBytes.Length != 4)
+            {
+                return null;
+            }
+
+            uint value = (uint)(rawBytes[0]
+                | (rawBytes[1] << 8)
+                | (rawBytes[2] << 16)
+                | (rawBytes[3] << 24));
+            return value == 0 ? (uint?)null : value;
         }
 
         private static BKChipIdentityResult Refine7236Family(BKChipIdentityResult primary, Func<int, byte[]> readRegister)

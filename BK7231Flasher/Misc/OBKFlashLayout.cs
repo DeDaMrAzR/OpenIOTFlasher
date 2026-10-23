@@ -77,6 +77,12 @@ namespace BK7231Flasher
                 case BKType.RTL8720E:
                     sectors = int.MinValue;
                     return int.MinValue;
+                case BKType.BK7236:
+                    sectors = 1;
+                    return 0x3C6000;
+                case BKType.BK7239N:
+                    sectors = 1;
+                    return 0x3C8000;
                 default:
                     sectors = 0;
                     return 0;
