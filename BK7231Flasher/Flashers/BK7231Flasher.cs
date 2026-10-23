@@ -2675,7 +2675,7 @@ namespace BK7231Flasher
             }
             else
             {
-                addWarning("IgnoreCRCErr checked, bin will be saved even if there is a crc mismatch" + Environment.NewLine);
+                addWarning("IgnoreCRCErr checked, bin will be saved even if there is a CRC mismatch" + Environment.NewLine);
             }
             return true;
         }
@@ -2922,7 +2922,7 @@ namespace BK7231Flasher
                     }
                 }
             }
-            addSuccess("Writing file data to chip successs." + Environment.NewLine);
+            addSuccess("File data written to chip successfully." + Environment.NewLine);
             //File.WriteAllBytes("lastRead.bin", ms.ToArray());
             return true;
         }

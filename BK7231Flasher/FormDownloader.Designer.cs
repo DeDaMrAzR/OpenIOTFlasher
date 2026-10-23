@@ -57,8 +57,8 @@
             this.label1.Name = "label1";
             this.label1.Size = new System.Drawing.Size(442, 13);
             this.label1.TabIndex = 2;
-            this.label1.Text = "This tool will connect to internet in order to get latest OBK binary. Wait for do" +
-    "wnload to finish!";
+            this.label1.Text = "This tool will connect to the internet to download the latest OBK binary. Please wait for the do" +
+    "wnload to finish.";
             // 
             // labelState
             // 
@@ -92,7 +92,7 @@
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.Name = "FormDownloader";
-            this.Text = "Automatic Firmware Downloader - downloads latest firmware binary from Github";
+            this.Text = "Automatic Firmware Downloader - downloads the latest firmware binary from GitHub";
             this.Load += new System.EventHandler(this.FormDownloader_Load);
             this.ResumeLayout(false);
             this.PerformLayout();

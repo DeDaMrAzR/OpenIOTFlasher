@@ -3296,7 +3296,7 @@ public bool extractKeys()
                                         keys_at = MiscUtils.indexOf(descryptedRaw, Encoding.ASCII.GetBytes("dev_if_rec_key"));
                                         if(keys_at == -1)
                                         {
-                                            FormMain.Singleton?.addLog("Failed to extract Tuya keys - no json start found" + Environment.NewLine, System.Drawing.Color.Orange);
+                                            FormMain.Singleton?.addLog("Failed to extract Tuya keys - no JSON start found" + Environment.NewLine, System.Drawing.Color.Orange);
                                             return true;
                                         }
                                     }
@@ -3305,7 +3305,7 @@ public bool extractKeys()
                             keys_at = FindByteForwardSafe(descryptedRaw, (byte)'{', keys_at);
                             if(keys_at == -1)
                             {
-                                FormMain.Singleton?.addLog("Failed to extract Tuya keys - no json start found after marker" + Environment.NewLine, System.Drawing.Color.Orange);
+                                FormMain.Singleton?.addLog("Failed to extract Tuya keys - no JSON start found after marker" + Environment.NewLine, System.Drawing.Color.Orange);
                                 return true;
                             }
                             keys_at++;
@@ -3326,7 +3326,7 @@ public bool extractKeys()
                     keys_at = FindByteForwardSafe(descryptedRaw, (byte)'{', keys_at);
                     if(keys_at == -1)
                     {
-                        FormMain.Singleton?.addLog("Failed to extract Tuya keys - user_param_key marker found but json start is missing" + Environment.NewLine, System.Drawing.Color.Orange);
+                        FormMain.Singleton?.addLog("Failed to extract Tuya keys - user_param_key marker found but JSON start is missing" + Environment.NewLine, System.Drawing.Color.Orange);
                         return true;
                     }
                     keys_at++;

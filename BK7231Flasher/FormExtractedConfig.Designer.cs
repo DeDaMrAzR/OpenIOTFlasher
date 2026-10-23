@@ -91,8 +91,8 @@
             this.label4.Name = "label4";
             this.label4.Size = new System.Drawing.Size(498, 13);
             this.label4.TabIndex = 5;
-            this.label4.Text = "You can just copy-paste the JSON format into OBK Web App->Import field to setup G" +
-    "PIO of your device.";
+            this.label4.Text = "Copy and paste the JSON into the OBK Web App → Import field to set up your device’s G" +
+    "PIO.";
             // 
             // labelMac
             // 

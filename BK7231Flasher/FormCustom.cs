@@ -66,8 +66,8 @@ namespace BK7231Flasher
             }
             if (bChanged)
             {
-                MessageBox.Show("Adjusted offsets to be multiply of SECTOR_SIZE ("
-                    +BK7231Flasher.SECTOR_SIZE+"), adjusted, please recheck");
+                MessageBox.Show("Rounded the start offset and/or length down to multiples of SECTOR_SIZE ("
+                    +BK7231Flasher.SECTOR_SIZE+"). Please check the adjusted values.");
                 return true;
             }
 

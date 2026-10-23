@@ -387,7 +387,7 @@
             // 
             this.saveAsToolStripMenuItem.Name = "saveAsToolStripMenuItem";
             this.saveAsToolStripMenuItem.Size = new System.Drawing.Size(295, 22);
-            this.saveAsToolStripMenuItem.Text = "Save obk settings as...";
+            this.saveAsToolStripMenuItem.Text = "Save OBK settings as...";
             this.saveAsToolStripMenuItem.Click += new System.EventHandler(this.saveAsToolStripMenuItem_Click);
             // 
             // buttonRandomizeNames

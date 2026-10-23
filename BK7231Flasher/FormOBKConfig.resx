@@ -121,7 +121,7 @@
     <value>This tool can automatically configure OBK on the first flashing operation of the device.
 USAGE:
 - you can drag and drop OBK device binary 2MB (or only config downloaded from Web App Flash tab) 
-  in order to inspect it's config content
+  in order to inspect its configuration
 - you can also drag and drop Tuya device 2MB binary here to import GPIO settings (if possible), this will 
    overwrite GPIOs but won't change WiFi/SSID/etc
 - a "Read device" operation in flasher will automatically update this tab content with loaded settings

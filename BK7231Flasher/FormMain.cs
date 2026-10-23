@@ -2053,7 +2053,7 @@ namespace BK7231Flasher
             refreshType();
             if (comboBoxFirmware.Items.Count == 0)
             {
-                var res = MessageBox.Show("No firmwares yet. Do you want to download one automatically?",
+                var res = MessageBox.Show("No firmware files found for the selected platform. Do you want to download one automatically?",
                     "Download?", MessageBoxButtons.YesNo);
                 if (res == DialogResult.Yes)
                 {
