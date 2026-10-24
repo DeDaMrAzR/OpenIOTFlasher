@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO.Ports;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -19,7 +20,7 @@ namespace BK7231Flasher
 		private long terminalReceiveErrorCountLogged;
 		private DateTime terminalNextReceiveWarningUtc;
 		private static readonly Color terminalReceiveWarningColor = Color.FromArgb(225, 40, 40);
-		private readonly Queue<KeyValuePair<string, Color>> terminalPendingOutput = new Queue<KeyValuePair<string, Color>>();
+		private readonly Queue<TerminalTextPart> terminalPendingOutput = new Queue<TerminalTextPart>();
 		private readonly object terminalOutputLock = new object();
 		private int terminalPendingOutputOffset;
 		private bool terminalFlushingOutput;
@@ -40,6 +41,49 @@ namespace BK7231Flasher
         private readonly StringBuilder terminalPreConnectText = new StringBuilder();
         private bool terminalConnectionAnnounced;
         private bool terminalPreviousWasCarriageReturn;
+        private readonly StringBuilder terminalEscapeSequence = new StringBuilder();
+        private Color terminalForegroundColor = Color.Empty;
+        private readonly List<TerminalColorSpan> terminalColorSpans = new List<TerminalColorSpan>();
+        private static readonly Color[] terminalAnsiColors = {
+            Color.FromArgb(0, 0, 0), Color.FromArgb(128, 0, 0),
+            Color.FromArgb(0, 128, 0), Color.FromArgb(128, 128, 0),
+            Color.FromArgb(0, 0, 128), Color.FromArgb(128, 0, 128),
+            Color.FromArgb(0, 128, 128), Color.FromArgb(192, 192, 192),
+            Color.FromArgb(128, 128, 128), Color.FromArgb(255, 0, 0),
+            Color.FromArgb(0, 255, 0), Color.FromArgb(255, 255, 0),
+            Color.FromArgb(0, 0, 255), Color.FromArgb(255, 0, 255),
+            Color.FromArgb(0, 255, 255), Color.FromArgb(255, 255, 255)
+        };
+
+        [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+        private static extern IntPtr TerminalSendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+        private static extern IntPtr TerminalSendMessage(IntPtr window, int message, IntPtr wParam, ref Point lParam);
+
+        [DllImport("user32.dll", EntryPoint = "RedrawWindow")]
+        private static extern bool RedrawTerminalWindow(IntPtr window, IntPtr updateRect, IntPtr updateRegion, uint flags);
+
+        private sealed class TerminalTextPart
+        {
+            internal readonly string Text;
+            internal readonly Color Color;
+            internal readonly bool PreserveColor;
+
+            internal TerminalTextPart(string text, Color color, bool preserveColor = false)
+            {
+                Text = text;
+                Color = color;
+                PreserveColor = preserveColor;
+            }
+        }
+
+        private sealed class TerminalColorSpan
+        {
+            internal int Start;
+            internal int Length;
+            internal Color Color;
+        }
 
 		private void InitializeTerminalTab()
 		{
@@ -64,24 +108,47 @@ namespace BK7231Flasher
 			});
 			comboBoxTerminalColors.SelectedIndex = 0;
 			comboBoxTerminalColors.SelectedIndexChanged += (sender, e) => {
-				int selectionStart = textBoxTerminalLog.SelectionStart;
-				int selectionLength = textBoxTerminalLog.SelectionLength;
-				textBoxTerminalLog.BackColor = comboBoxTerminalColors.SelectedIndex == 0
-					? standardBackground : Color.Black;
-				textBoxTerminalLog.ForeColor = comboBoxTerminalColors.SelectedIndex == 0
-					? standardForeground : comboBoxTerminalColors.SelectedIndex == 1 ? Color.White : Color.Lime;
-				textBoxTerminalLog.SelectAll();
-				textBoxTerminalLog.SelectionColor = textBoxTerminalLog.ForeColor;
-				// Preserve receive warnings when recoloring the existing log.
-				string warningPattern = @"\[Terminal\] (?:Receive overrun - some log data was lost|"
-					+ @"Serial receive error - incoming data may be unreliable)\. Reported events: [0-9]+ "
-					+ @"\((?:Overrun|RXOver|Frame|RXParity)(?:, (?:Overrun|RXOver|Frame|RXParity))*\)\.";
-				foreach (Match warning in Regex.Matches(textBoxTerminalLog.Text, warningPattern))
+				Point scrollPosition = Point.Empty;
+				TerminalSendMessage(textBoxTerminalLog.Handle, 0x04DD, IntPtr.Zero, ref scrollPosition); // EM_GETSCROLLPOS
+				bool suspendRedraw = textBoxTerminalLog.Visible;
+				if (suspendRedraw)
+					TerminalSendMessage(textBoxTerminalLog.Handle, 0x000B, IntPtr.Zero, IntPtr.Zero); // WM_SETREDRAW
+				try
 				{
-					textBoxTerminalLog.Select(warning.Index, warning.Length);
-					textBoxTerminalLog.SelectionColor = terminalReceiveWarningColor;
+					int selectionStart = textBoxTerminalLog.SelectionStart;
+					int selectionLength = textBoxTerminalLog.SelectionLength;
+					textBoxTerminalLog.BackColor = comboBoxTerminalColors.SelectedIndex == 0
+						? standardBackground : Color.Black;
+					textBoxTerminalLog.ForeColor = comboBoxTerminalColors.SelectedIndex == 0
+						? standardForeground : comboBoxTerminalColors.SelectedIndex == 1 ? Color.White : Color.Lime;
+					textBoxTerminalLog.SelectAll();
+					textBoxTerminalLog.SelectionColor = textBoxTerminalLog.ForeColor;
+					foreach (TerminalColorSpan span in terminalColorSpans)
+					{
+						textBoxTerminalLog.Select(span.Start, span.Length);
+						textBoxTerminalLog.SelectionColor = span.Color;
+					}
+					// Preserve receive warnings when recoloring the existing log.
+					string warningPattern = @"\[Terminal\] (?:Receive overrun - some log data was lost|"
+						+ @"Serial receive error - incoming data may be unreliable)\. Reported events: [0-9]+ "
+						+ @"\((?:Overrun|RXOver|Frame|RXParity)(?:, (?:Overrun|RXOver|Frame|RXParity))*\)\.";
+					foreach (Match warning in Regex.Matches(textBoxTerminalLog.Text, warningPattern))
+					{
+						textBoxTerminalLog.Select(warning.Index, warning.Length);
+						textBoxTerminalLog.SelectionColor = terminalReceiveWarningColor;
+					}
+					textBoxTerminalLog.Select(selectionStart, selectionLength);
 				}
-				textBoxTerminalLog.Select(selectionStart, selectionLength);
+				finally
+				{
+					TerminalSendMessage(textBoxTerminalLog.Handle, 0x04DE, IntPtr.Zero, ref scrollPosition); // EM_SETSCROLLPOS
+					if (suspendRedraw)
+					{
+						TerminalSendMessage(textBoxTerminalLog.Handle, 0x000B, new IntPtr(1), IntPtr.Zero);
+						// Invalidate the client area, frame and scroll bars after bulk recolouring.
+						RedrawTerminalWindow(textBoxTerminalLog.Handle, IntPtr.Zero, IntPtr.Zero, 0x0485);
+					}
+				}
 			};
 			tabPageTerminal.Controls.Add(comboBoxTerminalColors);
 			comboBoxTerminalLineEnding.SelectedIndex = 1;
@@ -142,7 +209,7 @@ namespace BK7231Flasher
 		{
 			lock (terminalReceiveLock)
 			{
-				terminalPreviousWasCarriageReturn = false;
+				ResetTerminalTextState();
 				terminalPreConnectText.Clear();
 				lock (terminalOutputLock)
 				{
@@ -151,6 +218,7 @@ namespace BK7231Flasher
 				}
 			}
 			textBoxTerminalLog.Clear();
+			terminalColorSpans.Clear();
 			ResetTerminalReceiveWarning();
 		}
 
@@ -365,7 +433,7 @@ namespace BK7231Flasher
 				lock (terminalReceiveLock)
 				{
 					terminalConnectionAnnounced = false;
-					terminalPreviousWasCarriageReturn = false;
+					ResetTerminalTextState();
 					terminalPreConnectText.Clear();
 					terminalSerialPort = port;
 					ResetTerminalReceiveWarning();
@@ -645,7 +713,7 @@ namespace BK7231Flasher
             lock (terminalReceiveLock)
             {
                 terminalConnectionAnnounced = false;
-                terminalPreviousWasCarriageReturn = false;
+                ResetTerminalTextState();
                 terminalPreConnectText.Clear();
             }
 
@@ -723,7 +791,7 @@ namespace BK7231Flasher
                 }
                 string normalized = NormalizeTerminalLineEndings(text);
                 if (normalized.Length > 0)
-                    AppendTerminalText(normalized, Color.Black);
+                    AppendTerminalFormattedText(normalized);
             }
         }
 
@@ -735,7 +803,7 @@ namespace BK7231Flasher
                 string normalized = NormalizeTerminalLineEndings(terminalPreConnectText.ToString());
                 terminalPreConnectText.Clear();
                 if (normalized.Length > 0)
-                    AppendTerminalText(normalized, Color.Black);
+                    AppendTerminalFormattedText(normalized);
             }
         }
 
@@ -764,14 +832,101 @@ namespace BK7231Flasher
             return normalized.ToString();
         }
 
-        private void AppendTerminalText(string text, Color color)
+        private void ResetTerminalTextState()
+        {
+            terminalPreviousWasCarriageReturn = false;
+            terminalEscapeSequence.Clear();
+            terminalForegroundColor = Color.Empty;
+        }
+
+        private void AppendTerminalFormattedText(string text)
+        {
+            if (terminalEscapeSequence.Length == 0 && text.IndexOf('\x1b') < 0)
+            {
+                AppendTerminalText(text, terminalForegroundColor, !terminalForegroundColor.IsEmpty);
+                return;
+            }
+            StringBuilder plainText = new StringBuilder();
+            foreach (char value in text)
+            {
+                if (terminalEscapeSequence.Length > 0)
+                {
+                    if ((terminalEscapeSequence.Length == 1 && value == '[')
+                        || (terminalEscapeSequence.Length >= 2 && terminalEscapeSequence.Length < 64
+                            && ((value >= '0' && value <= '9') || value == ';')))
+                    {
+                        terminalEscapeSequence.Append(value);
+                        continue;
+                    }
+                    if (terminalEscapeSequence.Length >= 2 && value == 'm')
+                    {
+                        ApplyTerminalForegroundColor(terminalEscapeSequence.ToString(2,
+                            terminalEscapeSequence.Length - 2));
+                        terminalEscapeSequence.Clear();
+                        continue;
+                    }
+                    // Preserve unsupported/malformed sequences instead of swallowing log text.
+                    plainText.Append(terminalEscapeSequence);
+                    terminalEscapeSequence.Clear();
+                }
+                if (value == '\x1b')
+                {
+                    AppendTerminalText(plainText.ToString(), terminalForegroundColor,
+                        !terminalForegroundColor.IsEmpty);
+                    plainText.Clear();
+                    terminalEscapeSequence.Append(value);
+                }
+                else
+                {
+                    plainText.Append(value);
+                }
+            }
+            AppendTerminalText(plainText.ToString(), terminalForegroundColor,
+                !terminalForegroundColor.IsEmpty);
+        }
+
+        private void ApplyTerminalForegroundColor(string parameters)
+        {
+            string[] fields = parameters.Split(';');
+            int[] values = new int[fields.Length];
+            for (int index = 0; index < fields.Length; index++)
+            {
+                if (fields[index].Length > 0 && !int.TryParse(fields[index], out values[index]))
+                    return;
+            }
+            for (int index = 0; index < values.Length; index++)
+            {
+                int value = values[index];
+                if (value == 0 || value == 39)
+                    terminalForegroundColor = Color.Empty;
+                else if (value >= 30 && value <= 37)
+                    terminalForegroundColor = terminalAnsiColors[value - 30];
+                else if (value >= 90 && value <= 97)
+                    terminalForegroundColor = terminalAnsiColors[value - 90 + 8];
+                else if (value == 38 || value == 48 || value == 58)
+                {
+                    // Extended colours are outside this foreground-only subset. Consume
+                    // their parameters together so RGB values cannot act as SGR commands.
+                    if (++index >= values.Length)
+                        return;
+                    if (values[index] == 2)
+                        index += 3;
+                    else if (values[index] == 5)
+                        index++;
+                    else
+                        return;
+                }
+            }
+        }
+
+        private void AppendTerminalText(string text, Color color, bool preserveColor = false)
         {
 			if (string.IsNullOrEmpty(text))
 				return;
 			lock (terminalOutputLock)
 			{
 				if (!terminalClosing)
-					terminalPendingOutput.Enqueue(new KeyValuePair<string, Color>(text, color));
+					terminalPendingOutput.Enqueue(new TerminalTextPart(text, color, preserveColor));
 			}
         }
 
@@ -782,35 +937,38 @@ namespace BK7231Flasher
 			if (!checkBoxTerminalAutoScroll.Checked && textBoxTerminalLog.Capture)
 				return;
 
-			var output = new List<KeyValuePair<string, Color>>();
+			var output = new List<TerminalTextPart>();
 			var text = new StringBuilder();
 			Color color = Color.Empty;
+			bool preserveColor = false;
 			int remaining = 32768;
 			lock (terminalOutputLock)
 			{
 				// Limit each update so other UI work can run between batches.
 				for (int count = 0; count < 128 && remaining > 0 && terminalPendingOutput.Count > 0; count++)
 				{
-					KeyValuePair<string, Color> part = terminalPendingOutput.Peek();
-					Color nextColor = comboBoxTerminalColors.SelectedIndex == 0 || part.Value == terminalReceiveWarningColor
-						? part.Value : textBoxTerminalLog.ForeColor;
-					if (text.Length > 0 && nextColor != color)
+					TerminalTextPart part = terminalPendingOutput.Peek();
+					Color nextColor = !part.Color.IsEmpty && (part.PreserveColor
+						|| comboBoxTerminalColors.SelectedIndex == 0 || part.Color == terminalReceiveWarningColor)
+						? part.Color : textBoxTerminalLog.ForeColor;
+					if (text.Length > 0 && (nextColor != color || part.PreserveColor != preserveColor))
 					{
-						output.Add(new KeyValuePair<string, Color>(text.ToString(), color));
+						output.Add(new TerminalTextPart(text.ToString(), color, preserveColor));
 						text.Clear();
 					}
 					color = nextColor;
-					int length = Math.Min(remaining, part.Key.Length - terminalPendingOutputOffset);
+					preserveColor = part.PreserveColor;
+					int length = Math.Min(remaining, part.Text.Length - terminalPendingOutputOffset);
 					int end = terminalPendingOutputOffset + length;
-					if (end < part.Key.Length && ((part.Key[end - 1] == '\r' && part.Key[end] == '\n')
-						|| (char.IsHighSurrogate(part.Key[end - 1]) && char.IsLowSurrogate(part.Key[end]))))
+					if (end < part.Text.Length && ((part.Text[end - 1] == '\r' && part.Text[end] == '\n')
+						|| (char.IsHighSurrogate(part.Text[end - 1]) && char.IsLowSurrogate(part.Text[end]))))
 						length--;
 					if (length == 0)
 						break;
-					text.Append(part.Key, terminalPendingOutputOffset, length);
+					text.Append(part.Text, terminalPendingOutputOffset, length);
 					remaining -= length;
 					terminalPendingOutputOffset += length;
-					if (terminalPendingOutputOffset == part.Key.Length)
+					if (terminalPendingOutputOffset == part.Text.Length)
 					{
 						terminalPendingOutput.Dequeue();
 						terminalPendingOutputOffset = 0;
@@ -818,14 +976,35 @@ namespace BK7231Flasher
 				}
 			}
 			if (text.Length > 0)
-				output.Add(new KeyValuePair<string, Color>(text.ToString(), color));
+				output.Add(new TerminalTextPart(text.ToString(), color, preserveColor));
 			if (output.Count == 0)
 				return;
 
 			terminalFlushingOutput = true;
 			try
 			{
-				RichTextUtil.AppendText(textBoxTerminalLog, output, checkBoxTerminalAutoScroll.Checked);
+				int start = textBoxTerminalLog.TextLength;
+				var rendered = new List<KeyValuePair<string, Color>>();
+				foreach (TerminalTextPart part in output)
+					rendered.Add(new KeyValuePair<string, Color>(part.Text, part.Color));
+				RichTextUtil.AppendText(textBoxTerminalLog, rendered, checkBoxTerminalAutoScroll.Checked);
+				foreach (TerminalTextPart part in output)
+				{
+					// RichEdit truncates an insertion at NUL and exposes CRLF as LF.
+					int nullIndex = part.Text.IndexOf('\0');
+					string visibleText = nullIndex < 0 ? part.Text : part.Text.Substring(0, nullIndex);
+					int length = visibleText.Replace("\r\n", "\n").Length;
+					if (part.PreserveColor && length > 0)
+					{
+						TerminalColorSpan previous = terminalColorSpans.Count == 0
+							? null : terminalColorSpans[terminalColorSpans.Count - 1];
+						if (previous != null && previous.Start + previous.Length == start && previous.Color == part.Color)
+							previous.Length += length;
+						else
+							terminalColorSpans.Add(new TerminalColorSpan { Start = start, Length = length, Color = part.Color });
+					}
+					start += length;
+				}
 			}
 			finally
 			{
