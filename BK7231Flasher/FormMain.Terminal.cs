@@ -86,6 +86,8 @@ namespace BK7231Flasher
 			};
 			tabPageTerminal.Controls.Add(comboBoxTerminalColors);
 			comboBoxTerminalLineEnding.SelectedIndex = 1;
+			comboBoxTerminalBaud.KeyDown += ComboBoxTerminalBaud_KeyDown;
+			comboBoxTerminalBaud.Leave += (sender, e) => ApplyTerminalBaudRateFromText();
 			ConfigureLogContextMenu(textBoxTerminalLog);
 			labelTerminalReceiveWarning = new Label
 			{
@@ -409,6 +411,29 @@ namespace BK7231Flasher
 			ApplySelectedTerminalBaudRate((int)comboBoxTerminalBaud.SelectedItem);
 		}
 
+		private void ComboBoxTerminalBaud_KeyDown(object sender, KeyEventArgs e)
+		{
+			if (e.KeyCode != Keys.Enter)
+				return;
+			e.SuppressKeyPress = true;
+			ApplyTerminalBaudRateFromText();
+			comboBoxTerminalBaud.DroppedDown = false;
+		}
+
+		private void ApplyTerminalBaudRateFromText()
+		{
+			if (!IsTerminalConnected)
+				return;
+			int baudRate;
+			if (!int.TryParse(comboBoxTerminalBaud.Text, out baudRate) || baudRate <= 0)
+			{
+				comboBoxTerminalBaud.Text = terminalSerialPort.BaudRate.ToString();
+				AppendTerminalLine("Enter a valid baud rate.", Color.Red);
+				return;
+			}
+			ApplySelectedTerminalBaudRate(baudRate);
+		}
+
 		private void ApplySelectedTerminalBaudRate(int newBaudRate)
 		{
 			SerialPort port = terminalSerialPort;
@@ -417,7 +442,10 @@ namespace BK7231Flasher
 
 			int previousBaudRate = port.BaudRate;
 			if (newBaudRate == previousBaudRate)
+			{
+				comboBoxTerminalBaud.Text = previousBaudRate.ToString();
 				return;
+			}
 
 			try
 			{
