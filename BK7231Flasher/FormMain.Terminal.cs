@@ -589,7 +589,9 @@ namespace BK7231Flasher
 			bool overrun = (errors & (SerialError.Overrun | SerialError.RXOver)) != 0;
 			string warning = overrun ? "Receive overrun - some log data was lost."
 				: "Serial receive error - incoming data may be unreliable.";
-			labelTerminalReceiveWarning.Text = "Warning: " + warning + " (" + count
+			string summary = overrun ? warning
+				: "Receive errors recorded in this log. Check baud rate and connections.";
+			labelTerminalReceiveWarning.Text = "Warning: " + summary + " (" + count
 				+ (count == 1 ? " reported event)" : " reported events)");
 			if (!terminalReceiveWarningVisible)
 			{
