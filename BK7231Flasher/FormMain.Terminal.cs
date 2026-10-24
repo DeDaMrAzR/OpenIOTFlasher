@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO.Ports;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -11,6 +12,13 @@ namespace BK7231Flasher
     public partial class FormMain : Form, ILogListener
     {
 		private ComboBox comboBoxTerminalColors;
+		private Label labelTerminalReceiveWarning;
+		private bool terminalReceiveWarningVisible;
+		private long terminalReceiveErrorCount;
+		private SerialError terminalReceiveErrors;
+		private long terminalReceiveErrorCountLogged;
+		private DateTime terminalNextReceiveWarningUtc;
+		private static readonly Color terminalReceiveWarningColor = Color.FromArgb(225, 40, 40);
 		private readonly Queue<KeyValuePair<string, Color>> terminalPendingOutput = new Queue<KeyValuePair<string, Color>>();
 		private readonly object terminalOutputLock = new object();
 		private int terminalPendingOutputOffset;
@@ -65,13 +73,41 @@ namespace BK7231Flasher
 					? standardForeground : comboBoxTerminalColors.SelectedIndex == 1 ? Color.White : Color.Lime;
 				textBoxTerminalLog.SelectAll();
 				textBoxTerminalLog.SelectionColor = textBoxTerminalLog.ForeColor;
+				// Preserve receive warnings when recoloring the existing log.
+				string warningPattern = @"\[Terminal\] (?:Receive overrun - some log data was lost|"
+					+ @"Serial receive error - incoming data may be unreliable)\. Reported events: [0-9]+ "
+					+ @"\((?:Overrun|RXOver|Frame|RXParity)(?:, (?:Overrun|RXOver|Frame|RXParity))*\)\.";
+				foreach (Match warning in Regex.Matches(textBoxTerminalLog.Text, warningPattern))
+				{
+					textBoxTerminalLog.Select(warning.Index, warning.Length);
+					textBoxTerminalLog.SelectionColor = terminalReceiveWarningColor;
+				}
 				textBoxTerminalLog.Select(selectionStart, selectionLength);
 			};
 			tabPageTerminal.Controls.Add(comboBoxTerminalColors);
 			comboBoxTerminalLineEnding.SelectedIndex = 1;
 			ConfigureLogContextMenu(textBoxTerminalLog);
+			labelTerminalReceiveWarning = new Label
+			{
+				Name = "labelTerminalReceiveWarning",
+				AccessibleName = "Serial receive warning",
+				AutoEllipsis = true,
+				Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+				BackColor = SystemColors.Info,
+				ForeColor = Color.FromArgb(128, 80, 0),
+				Padding = new Padding(6, 0, 6, 0),
+				TextAlign = ContentAlignment.MiddleLeft,
+				Size = new Size(textBoxTerminalLog.Width, Font.Height + 8),
+				Visible = false
+			};
+			labelTerminalReceiveWarning.Location = new Point(textBoxTerminalLog.Left,
+				textBoxTerminalLog.Bottom - labelTerminalReceiveWarning.Height);
+			tabPageTerminal.Controls.Add(labelTerminalReceiveWarning);
 			var outputTimer = new Timer(components) { Interval = 50 };
-			outputTimer.Tick += (sender, e) => FlushTerminalOutput();
+			outputTimer.Tick += (sender, e) => {
+				UpdateTerminalReceiveWarning();
+				FlushTerminalOutput();
+			};
 			outputTimer.Start();
 			textBoxTerminalLog.MouseCaptureChanged += (sender, e) => {
 				if (!textBoxTerminalLog.Capture)
@@ -109,6 +145,7 @@ namespace BK7231Flasher
 				terminalPendingOutputOffset = 0;
 			}
 			textBoxTerminalLog.Clear();
+			ResetTerminalReceiveWarning();
 		}
 
         private bool IsTerminalConnected
@@ -326,6 +363,8 @@ namespace BK7231Flasher
 					terminalPreviousWasLineBreak = false;
 					terminalPreConnectText.Clear();
 					terminalSerialPort = port;
+					ResetTerminalReceiveWarning();
+					port.ErrorReceived += TerminalSerialPort_ErrorReceived;
 					port.DataReceived += TerminalSerialPort_DataReceived;
 					AppendTerminalReceivedText(port.ReadExisting());
 					FlushTerminalPreConnectText();
@@ -404,6 +443,73 @@ namespace BK7231Flasher
 				comboBoxTerminalBaud.Text = activeBaudRate.ToString();
 				AppendTerminalLine("Unable to change baud rate: " + ex.Message, Color.Red);
 			}
+		}
+
+		private void TerminalSerialPort_ErrorReceived(object sender, SerialErrorReceivedEventArgs e)
+		{
+			SerialError errors = e.EventType & (SerialError.Overrun | SerialError.RXOver
+				| SerialError.Frame | SerialError.RXParity);
+			if (errors == 0)
+				return;
+			lock (terminalOutputLock)
+			{
+				if (terminalClosing || sender != terminalSerialPort)
+					return;
+				terminalReceiveErrors |= errors;
+				terminalReceiveErrorCount++;
+			}
+		}
+
+		private void ResetTerminalReceiveWarning()
+		{
+			lock (terminalOutputLock)
+			{
+				terminalReceiveErrorCount = 0;
+				terminalReceiveErrors = 0;
+			}
+			terminalReceiveErrorCountLogged = 0;
+			terminalNextReceiveWarningUtc = DateTime.MinValue;
+			if (terminalReceiveWarningVisible)
+				textBoxTerminalLog.Height += labelTerminalReceiveWarning.Height + 3;
+			terminalReceiveWarningVisible = false;
+			labelTerminalReceiveWarning.Visible = false;
+			labelTerminalReceiveWarning.Text = "";
+		}
+
+		private void UpdateTerminalReceiveWarning()
+		{
+			long count;
+			SerialError errors;
+			lock (terminalOutputLock)
+			{
+				count = terminalReceiveErrorCount;
+				errors = terminalReceiveErrors;
+			}
+			if (count == 0 || terminalClosing)
+				return;
+			bool overrun = (errors & (SerialError.Overrun | SerialError.RXOver)) != 0;
+			string warning = overrun ? "Receive overrun - some log data was lost."
+				: "Serial receive error - incoming data may be unreliable.";
+			labelTerminalReceiveWarning.Text = "Warning: " + warning + " (" + count
+				+ (count == 1 ? " reported event)" : " reported events)");
+			if (!terminalReceiveWarningVisible)
+			{
+				textBoxTerminalLog.Height -= labelTerminalReceiveWarning.Height + 3;
+				terminalReceiveWarningVisible = true;
+				labelTerminalReceiveWarning.Visible = true;
+			}
+			if (count == terminalReceiveErrorCountLogged || DateTime.UtcNow < terminalNextReceiveWarningUtc)
+				return;
+			var names = new List<string>();
+			foreach (SerialError error in new[] { SerialError.Overrun, SerialError.RXOver, SerialError.Frame, SerialError.RXParity })
+			{
+				if ((errors & error) != 0)
+					names.Add(error.ToString());
+			}
+			AppendTerminalLine("[Terminal] " + warning + " Reported events: " + count
+				+ " (" + string.Join(", ", names) + ").", terminalReceiveWarningColor);
+			terminalReceiveErrorCountLogged = count;
+			terminalNextReceiveWarningUtc = DateTime.UtcNow.AddSeconds(5);
 		}
 
         private void TerminalSerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
@@ -515,6 +621,7 @@ namespace BK7231Flasher
 
             if (port != null)
             {
+                port.ErrorReceived -= TerminalSerialPort_ErrorReceived;
                 port.DataReceived -= TerminalSerialPort_DataReceived;
                 try
                 {
@@ -682,7 +789,7 @@ namespace BK7231Flasher
 				for (int count = 0; count < 128 && remaining > 0 && terminalPendingOutput.Count > 0; count++)
 				{
 					KeyValuePair<string, Color> part = terminalPendingOutput.Peek();
-					Color nextColor = comboBoxTerminalColors.SelectedIndex == 0
+					Color nextColor = comboBoxTerminalColors.SelectedIndex == 0 || part.Value == terminalReceiveWarningColor
 						? part.Value : textBoxTerminalLog.ForeColor;
 					if (text.Length > 0 && nextColor != color)
 					{
