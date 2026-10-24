@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -12,6 +13,14 @@ namespace BK7231Flasher
 		[DllImport("user32.dll", EntryPoint = "SendMessageW")]
 		private static extern IntPtr SendMessage(IntPtr hWnd, int wMsg, IntPtr wParam, ref Point lParam);
 
+        [DllImport("user32.dll")]
+        private static extern bool RedrawWindow(IntPtr hWnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
+
+        private const uint RDW_INVALIDATE = 0x0001;
+        private const uint RDW_ERASE = 0x0004;
+        private const uint RDW_ALLCHILDREN = 0x0080;
+        private const uint RDW_FRAME = 0x0400;
+
         private const int WM_VSCROLL = 0x115;
         private const int SB_BOTTOM  = 7;
 		private const int WM_SETREDRAW = 0x0B;
@@ -19,6 +28,11 @@ namespace BK7231Flasher
 		private const int EM_SETSCROLLPOS = 0x04DE;
 
 		public static void AppendText(RichTextBox box, string text, Color color, bool scrollToBottom = true)
+		{
+			AppendText(box, new[] { new KeyValuePair<string, Color>(text, color) }, scrollToBottom);
+		}
+
+		public static void AppendText(RichTextBox box, IEnumerable<KeyValuePair<string, Color>> output, bool scrollToBottom = true)
 		{
 			IntPtr handle = box.Handle;
 			Point scrollPosition = Point.Empty;
@@ -36,8 +50,11 @@ namespace BK7231Flasher
 			try
 			{
 				box.Select(box.TextLength, 0);
-				box.SelectionColor = color;
-				box.AppendText(text);
+				foreach (KeyValuePair<string, Color> part in output)
+				{
+					box.SelectionColor = part.Value;
+					box.AppendText(part.Key);
+				}
 				box.SelectionColor = box.ForeColor;
 				if (scrollToBottom)
 					ScrollToBottom(box);
@@ -53,7 +70,8 @@ namespace BK7231Flasher
 				if (suspendRedraw)
 				{
 					SendMessage(handle, WM_SETREDRAW, 1, 0);
-					box.Invalidate();
+					RedrawWindow(handle, IntPtr.Zero, IntPtr.Zero,
+						RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
 				}
 			}
 		}

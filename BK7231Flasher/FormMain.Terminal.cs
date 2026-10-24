@@ -11,7 +11,9 @@ namespace BK7231Flasher
     public partial class FormMain : Form, ILogListener
     {
 		private ComboBox comboBoxTerminalColors;
-		private readonly List<KeyValuePair<string, Color>> terminalPendingOutput = new List<KeyValuePair<string, Color>>();
+		private readonly Queue<KeyValuePair<string, Color>> terminalPendingOutput = new Queue<KeyValuePair<string, Color>>();
+		private readonly object terminalOutputLock = new object();
+		private int terminalPendingOutputOffset;
 		private bool terminalFlushingOutput;
 		private bool terminalReconnectWanted;
 		private bool terminalClosing;
@@ -68,11 +70,12 @@ namespace BK7231Flasher
 			tabPageTerminal.Controls.Add(comboBoxTerminalColors);
 			comboBoxTerminalLineEnding.SelectedIndex = 1;
 			ConfigureLogContextMenu(textBoxTerminalLog);
+			var outputTimer = new Timer(components) { Interval = 50 };
+			outputTimer.Tick += (sender, e) => FlushTerminalOutput();
+			outputTimer.Start();
 			textBoxTerminalLog.MouseCaptureChanged += (sender, e) => {
-				if (!terminalFlushingOutput && terminalPendingOutput.Count != 0
-					&& !textBoxTerminalLog.Capture && textBoxTerminalLog.IsHandleCreated
-					&& !textBoxTerminalLog.IsDisposed && !terminalClosing)
-					textBoxTerminalLog.BeginInvoke((MethodInvoker)FlushTerminalOutput);
+				if (!textBoxTerminalLog.Capture)
+					FlushTerminalOutput();
 			};
 			checkBoxTerminalAutoScroll.CheckedChanged += (sender, e) => {
 				if (checkBoxTerminalAutoScroll.Checked)
@@ -100,7 +103,11 @@ namespace BK7231Flasher
 
 		private void ButtonTerminalClear_Click(object sender, EventArgs e)
 		{
-			terminalPendingOutput.Clear();
+			lock (terminalOutputLock)
+			{
+				terminalPendingOutput.Clear();
+				terminalPendingOutputOffset = 0;
+			}
 			textBoxTerminalLog.Clear();
 		}
 
@@ -531,7 +538,12 @@ namespace BK7231Flasher
 
         private void CloseTerminalPort()
         {
-			terminalClosing = true;
+			lock (terminalOutputLock)
+			{
+				terminalClosing = true;
+				terminalPendingOutput.Clear();
+				terminalPendingOutputOffset = 0;
+			}
 			CancelTerminalReconnect();
 			DisconnectTerminal();
         }
@@ -644,49 +656,66 @@ namespace BK7231Flasher
 
         private void AppendTerminalText(string text, Color color)
         {
-            if (textBoxTerminalLog == null || textBoxTerminalLog.IsDisposed)
-                return;
-
-            if (textBoxTerminalLog.InvokeRequired)
-            {
-                try
-                {
-                    textBoxTerminalLog.BeginInvoke((MethodInvoker)delegate
-                    {
-						if (!textBoxTerminalLog.IsDisposed)
-							AppendTerminalText(text, color);
-                    });
-                }
-                catch (InvalidOperationException)
-                {
-                }
-                return;
-            }
-
-			terminalPendingOutput.Add(new KeyValuePair<string, Color>(text, color));
-			FlushTerminalOutput();
+			if (string.IsNullOrEmpty(text))
+				return;
+			lock (terminalOutputLock)
+			{
+				if (!terminalClosing)
+					terminalPendingOutput.Enqueue(new KeyValuePair<string, Color>(text, color));
+			}
         }
 
 		private void FlushTerminalOutput()
 		{
-			if (terminalFlushingOutput || terminalPendingOutput.Count == 0
-				|| textBoxTerminalLog.IsDisposed || terminalClosing)
+			if (terminalFlushingOutput || textBoxTerminalLog.IsDisposed || terminalClosing)
 				return;
 			if (!checkBoxTerminalAutoScroll.Checked && textBoxTerminalLog.Capture)
+				return;
+
+			var output = new List<KeyValuePair<string, Color>>();
+			var text = new StringBuilder();
+			Color color = Color.Empty;
+			int remaining = 32768;
+			lock (terminalOutputLock)
+			{
+				// Limit each update so other UI work can run between batches.
+				for (int count = 0; count < 128 && remaining > 0 && terminalPendingOutput.Count > 0; count++)
+				{
+					KeyValuePair<string, Color> part = terminalPendingOutput.Peek();
+					Color nextColor = comboBoxTerminalColors.SelectedIndex == 0
+						? part.Value : textBoxTerminalLog.ForeColor;
+					if (text.Length > 0 && nextColor != color)
+					{
+						output.Add(new KeyValuePair<string, Color>(text.ToString(), color));
+						text.Clear();
+					}
+					color = nextColor;
+					int length = Math.Min(remaining, part.Key.Length - terminalPendingOutputOffset);
+					int end = terminalPendingOutputOffset + length;
+					if (end < part.Key.Length && ((part.Key[end - 1] == '\r' && part.Key[end] == '\n')
+						|| (char.IsHighSurrogate(part.Key[end - 1]) && char.IsLowSurrogate(part.Key[end]))))
+						length--;
+					if (length == 0)
+						break;
+					text.Append(part.Key, terminalPendingOutputOffset, length);
+					remaining -= length;
+					terminalPendingOutputOffset += length;
+					if (terminalPendingOutputOffset == part.Key.Length)
+					{
+						terminalPendingOutput.Dequeue();
+						terminalPendingOutputOffset = 0;
+					}
+				}
+			}
+			if (text.Length > 0)
+				output.Add(new KeyValuePair<string, Color>(text.ToString(), color));
+			if (output.Count == 0)
 				return;
 
 			terminalFlushingOutput = true;
 			try
 			{
-				foreach (KeyValuePair<string, Color> output in terminalPendingOutput)
-				{
-					RichTextUtil.AppendText(
-						textBoxTerminalLog,
-						output.Key,
-						comboBoxTerminalColors.SelectedIndex == 0 ? output.Value : textBoxTerminalLog.ForeColor,
-						checkBoxTerminalAutoScroll.Checked);
-				}
-				terminalPendingOutput.Clear();
+				RichTextUtil.AppendText(textBoxTerminalLog, output, checkBoxTerminalAutoScroll.Checked);
 			}
 			finally
 			{
