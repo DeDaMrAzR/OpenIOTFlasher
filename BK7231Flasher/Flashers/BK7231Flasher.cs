@@ -599,11 +599,14 @@ namespace BK7231Flasher
                 }
                 if (rxLen == 0)
                     return null;
+                double transmitTime = txbuf != null
+                    ? txbuf.Length * 10.0 / Math.Max(serial.BaudRate, 1)
+                    : 0;
                 var timer = new Stopwatch();
                 timer.Start();
                 List<byte> received = new List<byte>(rxLen);
                 byte[] readBuffer = new byte[Math.Min(Math.Max(rxLen, 256), 4096)];
-                while (timer.Elapsed.TotalSeconds < timeout * UART_COMMAND_TIMEOUT_MULTIPLIER)
+                while (timer.Elapsed.TotalSeconds < transmitTime + timeout * UART_COMMAND_TIMEOUT_MULTIPLIER)
                 {
                     try
                     {
