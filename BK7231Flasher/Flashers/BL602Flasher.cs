@@ -1394,6 +1394,12 @@ namespace BK7231Flasher
                             {
                                 efdata = EasyFlash.SaveValueToExistingEasyFlash("mY0bcFg", cfg.efdata, cfgData, areaSize, chipType);
                             }
+                            catch(EasyFlashCapacityException ex)
+                            {
+                                logger.setState("OBK config write error!", Color.Red);
+                                addErrorLine("OBK config was not written: " + ex.Message);
+                                return;
+                            }
                             catch(Exception ex)
                             {
                                 addLog("Saving config to existing EasyFlash failed" + Environment.NewLine);

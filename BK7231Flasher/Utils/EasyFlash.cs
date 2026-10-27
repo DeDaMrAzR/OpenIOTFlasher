@@ -4,6 +4,13 @@ using System.Text;
 
 namespace BK7231Flasher
 {
+	sealed class EasyFlashCapacityException : InvalidOperationException
+	{
+		public EasyFlashCapacityException(string message) : base(message)
+		{
+		}
+	}
+
 	static class EasyFlash
 	{
 		internal static int EF_WRITE_GRAN = 1;
@@ -256,6 +263,8 @@ namespace BK7231Flasher
 			foreach(var kv in kvPairs)
 			{
 				byte[] entry = NativeEF_MakeEntry(kv.Key, kv.Value);
+				if(entry.Length > SECTOR_AVAIL)
+					throw new EasyFlashCapacityException($"EasyFlash entry '{kv.Key}' exceeds the capacity of one flash sector.");
 				if(curUsed + entry.Length > SECTOR_AVAIL && cur.Count > 0)
 				{
 					sectors.Add(cur);
@@ -267,11 +276,14 @@ namespace BK7231Flasher
 			}
 			if(cur.Count > 0) sectors.Add(cur);
 
+			int nSectors = areaSize / BK7231Flasher.SECTOR_SIZE;
+			if(sectors.Count > nSectors)
+				throw new EasyFlashCapacityException($"EasyFlash data needs {sectors.Count} sectors, but the configuration area holds only {nSectors}.");
+
 			byte[] result = new byte[areaSize];
 			result.AsSpan().Fill(0xFF);
 
 			byte[] blankHdr = NativeEF_MakeSectorHdr(false);
-			int nSectors = areaSize / BK7231Flasher.SECTOR_SIZE;
 
 			for(int s = 0; s < nSectors; s++)
 			{
