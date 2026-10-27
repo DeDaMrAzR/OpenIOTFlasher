@@ -563,31 +563,23 @@ namespace BK7231Flasher
 				addErrorLine("Writing only OBK config is disabled for W600, use \"Automatically configure OBK on flash write\".");
 				return;
 			}
-			if(!doGenericSetup() || !InitialiseTarget())
-				return;
+			byte[] firmware = null;
+			uint firmwareOffset = 0;
+			string writeSummary = null;
 			try
 			{
-				xm.PacketSent += Xm_PacketSent;
-				SetBaud(baudrate);
-				OBKConfig cfg = logger.getConfigToWrite();
 				if(rwMode == WriteMode.OnlyWrite)
 				{
 					if(string.IsNullOrEmpty(sourceFileName))
 					{
-						addLogLine("No filename given!");
+						addErrorLine("No filename given!");
 						return;
 					}
 					addLogLine("Writing " + sourceFileName + "...");
 					byte[] data = File.ReadAllBytes(sourceFileName);
-					string writeSummary;
 					if(sourceFileName.EndsWith(".fls", StringComparison.OrdinalIgnoreCase))
 					{
-						if(xm.Send(data) != data.Length)
-						{
-							logger.setState("Write error!", Color.Red);
-							logger.setLogProgress("Write error!" + Environment.NewLine, Color.Red);
-							return;
-						}
+						firmware = data;
 						writeSummary = $"Done W600 FLS write: {data.Length} bytes transferred.";
 					}
 					else if(data.Length >= 0x100000)
@@ -607,19 +599,37 @@ namespace BK7231Flasher
 						}
 						var cutData = new byte[data.Length - startSector];
 						Array.Copy(data, startSector, cutData, 0, cutData.Length);
-						var fls = GenerateW600PseudoFLSFromData(cutData, startSector | 0x08000000);
-						if(xm.Send(fls, (uint)startSector) != fls.Length)
-						{
-							logger.setState("Write error!", Color.Red);
-							logger.setLogProgress("Write error!" + Environment.NewLine, Color.Red);
-							return;
-						}
+						firmware = GenerateW600PseudoFLSFromData(cutData, startSector | 0x08000000);
+						firmwareOffset = (uint)startSector;
 						writeSummary = $"Done W600 backup restore: programmed 0x{startSector:X6}-0x{data.Length - 1:X6} " +
 							$"({cutData.Length} bytes); preserved 0x000000-0x{startSector - 1:X6}.";
 					}
 					else
 					{
 						addErrorLine("Unknown file type, skipping.");
+						return;
+					}
+				}
+			}
+			catch(Exception ex)
+			{
+				addErrorLine(ex.Message);
+				return;
+			}
+
+			if(!doGenericSetup() || !InitialiseTarget())
+				return;
+			try
+			{
+				xm.PacketSent += Xm_PacketSent;
+				SetBaud(baudrate);
+				OBKConfig cfg = logger.getConfigToWrite();
+				if(rwMode == WriteMode.OnlyWrite)
+				{
+					if(xm.Send(firmware, firmwareOffset) != firmware.Length)
+					{
+						logger.setState("Write error!", Color.Red);
+						logger.setLogProgress("Write error!" + Environment.NewLine, Color.Red);
 						return;
 					}
 					logger.setState("Writing done", Color.DarkGreen);
