@@ -1118,8 +1118,6 @@ namespace BK7231Flasher
             long requestedEnd = (long)startAddress + length;
             int eraseEnd = (int)((requestedEnd + XR_ERASE_SECTOR_SIZE - 1) & ~(long)(XR_ERASE_SECTOR_SIZE - 1));
             int headEnd = Math.Min(eraseEnd, (eraseStart + XR_ERASE_BLOCK_SIZE - 1) & ~(XR_ERASE_BLOCK_SIZE - 1));
-            if (headEnd + XR_ERASE_BLOCK_SIZE > eraseEnd)
-                headEnd = eraseStart;
 
             int bulkStart = headEnd;
             int bulkEnd = bulkStart + ((eraseEnd - bulkStart) / XR_ERASE_BLOCK_SIZE) * XR_ERASE_BLOCK_SIZE;
