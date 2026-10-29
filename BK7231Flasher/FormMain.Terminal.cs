@@ -107,8 +107,7 @@ namespace BK7231Flasher
 			});
 			comboBoxTerminalColors.SelectedIndex = 0;
 			comboBoxTerminalColors.SelectedIndexChanged += (sender, e) => {
-				Point scrollPosition = Point.Empty;
-				TerminalSendMessage(textBoxTerminalLog.Handle, 0x04DD, IntPtr.Zero, ref scrollPosition); // EM_GETSCROLLPOS
+				Point scrollPosition = RichTextUtil.GetScrollPosition(textBoxTerminalLog);
 				bool suspendRedraw = textBoxTerminalLog.Visible;
 				if (suspendRedraw)
 					TerminalSendMessage(textBoxTerminalLog.Handle, 0x000B, IntPtr.Zero, IntPtr.Zero); // WM_SETREDRAW

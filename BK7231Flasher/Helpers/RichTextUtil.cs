@@ -12,6 +12,14 @@ namespace BK7231Flasher
         private static extern int SendMessage(IntPtr hWnd, int wMsg, int wParam, int lParam);
 		[DllImport("user32.dll", EntryPoint = "SendMessageW")]
 		private static extern IntPtr SendMessage(IntPtr hWnd, int wMsg, IntPtr wParam, ref Point lParam);
+		[DllImport("user32.dll", EntryPoint = "SendMessageW")]
+		private static extern IntPtr SendMessage(IntPtr hWnd, int wMsg, IntPtr wParam, ref TextRectangle lParam);
+
+		[StructLayout(LayoutKind.Sequential)]
+		private struct TextRectangle
+		{
+			public int Left, Top, Right, Bottom;
+		}
 
         [DllImport("user32.dll")]
         private static extern bool RedrawWindow(IntPtr hWnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
@@ -24,8 +32,20 @@ namespace BK7231Flasher
         private const int WM_VSCROLL = 0x115;
         private const int SB_BOTTOM  = 7;
 		private const int WM_SETREDRAW = 0x0B;
-		private const int EM_GETSCROLLPOS = 0x04DD;
+		private const int EM_GETRECT = 0x00B2;
 		private const int EM_SETSCROLLPOS = 0x04DE;
+
+		public static Point GetScrollPosition(RichTextBox box)
+		{
+			if (box.TextLength == 0)
+				return Point.Empty;
+			// EM_GETSCROLLPOS scales long documents to 16-bit coordinates. Log text
+			// starts at the formatting rectangle; its origin retains the full offset.
+			TextRectangle rectangle = new TextRectangle();
+			SendMessage(box.Handle, EM_GETRECT, IntPtr.Zero, ref rectangle);
+			Point origin = box.GetPositionFromCharIndex(0);
+			return new Point(Math.Max(0, rectangle.Left - origin.X), Math.Max(0, rectangle.Top - origin.Y));
+		}
 
 		public static void AppendText(RichTextBox box, string text, Color color, bool scrollToBottom = true)
 		{
@@ -40,7 +60,7 @@ namespace BK7231Flasher
 			int selectionLength = 0;
 			if (!scrollToBottom)
 			{
-				SendMessage(handle, EM_GETSCROLLPOS, IntPtr.Zero, ref scrollPosition);
+				scrollPosition = GetScrollPosition(box);
 				selectionStart = box.SelectionStart;
 				selectionLength = box.SelectionLength;
 			}
