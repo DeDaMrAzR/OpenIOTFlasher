@@ -956,7 +956,7 @@ namespace BK7231Flasher
 			lock (terminalOutputLock)
 			{
 				// Limit each update so other UI work can run between batches.
-				for (int count = 0; count < 128 && remaining > 0 && terminalPendingOutput.Count > 0; count++)
+				while (output.Count < 128 && remaining > 0 && terminalPendingOutput.Count > 0)
 				{
 					TerminalTextPart part = terminalPendingOutput.Peek();
 					Color nextColor = !part.Color.IsEmpty && (part.PreserveColor
@@ -966,6 +966,8 @@ namespace BK7231Flasher
 					{
 						output.Add(new TerminalTextPart(text.ToString(), color, preserveColor));
 						text.Clear();
+						if (output.Count == 128)
+							break;
 					}
 					color = nextColor;
 					preserveColor = part.PreserveColor;
