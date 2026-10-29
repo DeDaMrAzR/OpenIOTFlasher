@@ -860,6 +860,8 @@ namespace BK7231Flasher
 
         private void AppendTerminalFormattedText(string text)
         {
+            // Ignore NUL padding before RichEdit can truncate the following text.
+            text = text.Replace("\0", string.Empty);
             if (terminalEscapeSequence.Length == 0 && text.IndexOf('\x1b') < 0)
             {
                 AppendTerminalText(text, terminalForegroundColor, !terminalForegroundColor.IsEmpty);
