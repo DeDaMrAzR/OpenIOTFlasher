@@ -4,7 +4,6 @@ using System.Drawing;
 using System.IO.Ports;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -127,15 +126,6 @@ namespace BK7231Flasher
 					{
 						textBoxTerminalLog.Select(span.Start, span.Length);
 						textBoxTerminalLog.SelectionColor = span.Color;
-					}
-					// Preserve receive warnings when recoloring the existing log.
-					string warningPattern = @"\[Terminal\] (?:Receive overrun - some log data was lost|"
-						+ @"Serial receive error - incoming data may be unreliable)\. Reported events: [0-9]+ "
-						+ @"\((?:Overrun|RXOver|Frame|RXParity)(?:, (?:Overrun|RXOver|Frame|RXParity))*\)\.";
-					foreach (Match warning in Regex.Matches(textBoxTerminalLog.Text, warningPattern))
-					{
-						textBoxTerminalLog.Select(warning.Index, warning.Length);
-						textBoxTerminalLog.SelectionColor = terminalReceiveWarningColor;
 					}
 					textBoxTerminalLog.Select(selectionStart, selectionLength);
 				}
@@ -643,8 +633,8 @@ namespace BK7231Flasher
 				if ((errors & error) != 0)
 					names.Add(error.ToString());
 			}
-			AppendTerminalLine("[Terminal] " + warning + " Reported events: " + count
-				+ " (" + string.Join(", ", names) + ").", terminalReceiveWarningColor);
+			AppendTerminalText("[Terminal] " + warning + " Reported events: " + count
+				+ " (" + string.Join(", ", names) + ")." + Environment.NewLine, terminalReceiveWarningColor, true);
 			terminalReceiveErrorCountLogged = count;
 			terminalNextReceiveWarningUtc = DateTime.UtcNow.AddSeconds(5);
 		}
