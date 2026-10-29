@@ -13,6 +13,7 @@ namespace BK7231Flasher
     public partial class FormMain : Form, ILogListener
     {
 		private ComboBox comboBoxTerminalColors;
+		private ComboBox comboBoxTerminalReceiveLineEnding;
 		private Label labelTerminalReceiveWarning;
 		private bool terminalReceiveWarningVisible;
 		private long terminalReceiveErrorCount;
@@ -40,7 +41,7 @@ namespace BK7231Flasher
         private readonly object terminalReceiveLock = new object();
         private readonly StringBuilder terminalPreConnectText = new StringBuilder();
         private bool terminalConnectionAnnounced;
-        private bool terminalPreviousWasCarriageReturn;
+        private bool terminalReceiveCarriageReturn;
         private readonly StringBuilder terminalEscapeSequence = new StringBuilder();
         private Color terminalForegroundColor = Color.Empty;
         private readonly List<TerminalColorSpan> terminalColorSpans = new List<TerminalColorSpan>();
@@ -99,7 +100,6 @@ namespace BK7231Flasher
 				Name = "comboBoxTerminalColors",
 				AccessibleName = "Terminal colors",
 				DropDownStyle = ComboBoxStyle.DropDownList,
-				Location = new Point(checkBoxTerminalAutoScroll.Right + 8, comboBoxTerminalBaud.Top),
 				Size = new Size(190, comboBoxTerminalBaud.Height),
 				TabIndex = 9
 			};
@@ -150,7 +150,43 @@ namespace BK7231Flasher
 					}
 				}
 			};
-			tabPageTerminal.Controls.Add(comboBoxTerminalColors);
+			comboBoxTerminalReceiveLineEnding = new ComboBox
+			{
+				Name = "comboBoxTerminalReceiveLineEnding",
+				AccessibleName = "Receive line endings",
+				DropDownStyle = ComboBoxStyle.DropDownList,
+				Size = new Size(110, comboBoxTerminalBaud.Height),
+				TabIndex = 10
+			};
+			comboBoxTerminalReceiveLineEnding.Items.AddRange(new object[] { "LF / CRLF", "CR only" });
+			comboBoxTerminalReceiveLineEnding.SelectedIndex = 0;
+			comboBoxTerminalReceiveLineEnding.SelectedIndexChanged += (sender, e) => {
+				lock (terminalReceiveLock)
+					terminalReceiveCarriageReturn = comboBoxTerminalReceiveLineEnding.SelectedIndex == 1;
+			};
+			var labelTerminalReceiveLineEnding = new Label
+			{
+				Name = "labelTerminalReceiveLineEnding",
+				Text = "Receive line endings:",
+				AutoSize = true,
+				Padding = new Padding(8, 4, 0, 0)
+			};
+			var displayOptions = new FlowLayoutPanel
+			{
+				Name = "flowLayoutPanelTerminalDisplay",
+				Location = textBoxTerminalLog.Location,
+				Size = new Size(textBoxTerminalLog.Width, Math.Max(buttonTerminalClear.Height,
+					comboBoxTerminalColors.Height) + 6),
+				Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+				WrapContents = false,
+				TabIndex = 6
+			};
+			checkBoxTerminalAutoScroll.Padding = Padding.Empty;
+			displayOptions.Controls.AddRange(new Control[] { buttonTerminalClear, checkBoxTerminalAutoScroll,
+				comboBoxTerminalColors, labelTerminalReceiveLineEnding, comboBoxTerminalReceiveLineEnding });
+			tabPageTerminal.Controls.Add(displayOptions);
+			textBoxTerminalLog.Top = displayOptions.Bottom + 6;
+			textBoxTerminalLog.Height -= displayOptions.Height + 6;
 			comboBoxTerminalLineEnding.SelectedIndex = 1;
 			comboBoxTerminalBaud.KeyDown += ComboBoxTerminalBaud_KeyDown;
 			comboBoxTerminalBaud.Leave += (sender, e) => ApplyTerminalBaudRateFromText();
@@ -811,32 +847,13 @@ namespace BK7231Flasher
 
         private string NormalizeTerminalLineEndings(string text)
         {
-            StringBuilder normalized = new StringBuilder(text.Length + 16);
-            for (int index = 0; index < text.Length; index++)
-            {
-                char value = text[index];
-                if (value == '\r')
-                {
-                    // Emit CR immediately; remember it only to consume a matching LF.
-                    normalized.Append(Environment.NewLine);
-                }
-                else if (value == '\n')
-                {
-                    if (!terminalPreviousWasCarriageReturn)
-                        normalized.Append(Environment.NewLine);
-                }
-                else
-                {
-                    normalized.Append(value);
-                }
-                terminalPreviousWasCarriageReturn = value == '\r';
-            }
-            return normalized.ToString();
+            if (terminalReceiveCarriageReturn)
+                return text.Replace("\n", string.Empty).Replace("\r", Environment.NewLine);
+            return text.Replace("\r", string.Empty).Replace("\n", Environment.NewLine);
         }
 
         private void ResetTerminalTextState()
         {
-            terminalPreviousWasCarriageReturn = false;
             terminalEscapeSequence.Clear();
             terminalForegroundColor = Color.Empty;
         }
