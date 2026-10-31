@@ -209,11 +209,7 @@ namespace BK7231Flasher
 
         protected bool DoGenericSetup()
         {
-            addLog("Now is: " + DateTime.Now.ToLongDateString()
-                              + " " + DateTime.Now.ToLongTimeString()
-                              + "." + Environment.NewLine);
-            addLog("Flasher mode: " + chipType + Environment.NewLine);
-            addLog("Going to open port: " + serialName + "." + Environment.NewLine);
+			addLogLine($"Connecting: {serialName}, {chipType}, requested transfer {baudrate} baud.");
             try
             {
                 serial = new SerialPort(serialName, XR_ROM_BAUD);
@@ -230,7 +226,6 @@ namespace BK7231Flasher
                 addErrorLine("Port setup failed: " + ex.Message);
                 return false;
             }
-            addLogLine("Port ready!");
             return true;
         }
 
@@ -477,12 +472,13 @@ namespace BK7231Flasher
 
             flashID = resp.Payload;
             addLogLine($"BROM version : {bromVersion}");
-            addLogLine($"Flash ID     : {flashID[0]:X2} {flashID[1]:X2} {flashID[2]:X2}");
 
             if (flashID.Length >= 3 && flashID[2] >= 0x11 && flashID[2] <= 0x20)
             {
                 flashSizeBytes = (1 << (flashID[2] - 0x11)) * 0x20000;
-                addLogLine($"Flash size   : {flashSizeBytes / 0x100000} MB");
+				int jedecId = flashID[0] | flashID[1] << 8 | flashID[2] << 16;
+				SPIFlashInfo info = SPIFlashInfoList.Singleton.findFlashForMID(jedecId);
+				addSuccess(FormatFlashInfo(jedecId, info?.manufacturer ?? "unknown", flashSizeBytes, info?.icName) + Environment.NewLine);
             }
             else
             {
@@ -493,6 +489,7 @@ namespace BK7231Flasher
 
         protected byte[] InternalRead(int startAddress, int length)
         {
+			readFailed = true;
             var result       = new byte[length];
             int done         = 0;
             int totalSectors = (length + XR_SECTOR_SIZE - 1) / XR_SECTOR_SIZE;
@@ -501,12 +498,13 @@ namespace BK7231Flasher
 
             logger.setProgress(0, totalSectors);
             logger.setState("Reading...", Color.Transparent);
-            addLog("Reading: ");
+			addLogLine($"Read range: 0x{startAddress:X6}-0x{startAddress + length - 1:X6} ({length} bytes), at {serial.BaudRate} baud.");
+			int lastPercent = -1;
 
             for (int s = 0; s < totalSectors && !isCancelled; )
             {
                 int count = Math.Min(perRead, totalSectors - s);
-                addLog($"0x{startAddress + s * XR_SECTOR_SIZE:X6}... ");
+
                 byte[] chunk = ReadSectors(startSector + s, count);
                 if (chunk == null)
                     throw new IOException(
@@ -518,10 +516,18 @@ namespace BK7231Flasher
                 done += take;
                 s    += count;
                 logger.setProgress(s, totalSectors);
+				int percent = (int)((long)done * 100 / length);
+				if (percent != lastPercent)
+				{
+					SetOperationProgress($"Reading: ({percent,3}%) 0x{startAddress + done:X6}", Color.Black);
+					lastPercent = percent;
+				}
             }
 
-            addLog(Environment.NewLine);
-            logger.setState("Read complete", Color.DarkGreen);
+			FinishOperationProgress();
+			if (isCancelled || done != length)
+				throw new OperationCanceledException();
+			readFailed = false;
             return result;
         }
 
@@ -532,7 +538,8 @@ namespace BK7231Flasher
 
             logger.setProgress(0, total);
             logger.setState("Writing...", Color.Transparent);
-            addLog("Writing: ");
+			addLogLine($"Write range: 0x{startAddress:X6}-0x{startAddress + data.Length - 1:X6} ({data.Length} bytes), at {serial.BaudRate} baud.");
+			int lastPercent = -1;
 
             for (int offset = 0; offset < data.Length && !isCancelled; )
             {
@@ -544,20 +551,29 @@ namespace BK7231Flasher
                 int sectorIndex = (startAddress + offset) / XR_SECTOR_SIZE;
                 int sectorCount = chunk.Length / XR_SECTOR_SIZE;
 
-                addLog($"0x{startAddress + offset:X6}... ");
+
                 if (!WriteSectors(sectorIndex, chunk, sectorCount))
                 {
-                    addLog(Environment.NewLine);
+					FinishOperationProgress();
                     logger.setState("Write failed", Color.Red);
                     return false;
                 }
 
                 offset += chunkBytes;
                 logger.setProgress(++done, total);
+				int percent = (int)((long)offset * 100 / data.Length);
+				if (percent != lastPercent)
+				{
+					SetOperationProgress($"Writing: ({percent,3}%) 0x{startAddress + offset:X6}", Color.Black);
+					lastPercent = percent;
+				}
             }
 
-            addLog(Environment.NewLine);
-            logger.setState("Write complete", Color.DarkGreen);
+			FinishOperationProgress();
+			if (!isCancelled)
+			{
+				logger.setState("Write complete", Color.DarkGreen);
+			}
             return !isCancelled;
         }
 
@@ -673,8 +689,10 @@ namespace BK7231Flasher
             return lastEnd;
         }
 
+		bool readFailed;
         public override bool saveReadResult(int startOffset)
         {
+			if (readFailed) return false;
             if (readResult == null) { addErrorLine("No read result to save."); return false; }
             try
             {
@@ -683,8 +701,9 @@ namespace BK7231Flasher
                 Directory.CreateDirectory("backups");
                 string fullPath = Path.Combine("backups", fileName);
                 File.WriteAllBytes(fullPath, dat);
-                addSuccess($"Saved {dat.Length} bytes → {fullPath}" + Environment.NewLine);
+				addLogLine($"Saved: {dat.Length} bytes to {fullPath}.");
                 logger.onReadResultQIOSaved(dat, "", fullPath);
+				addSuccess("Read complete." + Environment.NewLine);
                 return true;
             }
             catch (Exception ex)
@@ -696,7 +715,7 @@ namespace BK7231Flasher
 
         public override byte[] getReadResult()
         {
-            return readResult?.ToArray();
+			return readFailed ? null : readResult?.ToArray();
         }
 
         public override void doWrite(int startSector, byte[] data)
@@ -706,6 +725,9 @@ namespace BK7231Flasher
 
         public override void doRead(int startSector = 0x000, int sectors = 10, bool fullRead = false)
         {
+			readFailed = true;
+			readResult?.Dispose();
+			readResult = null;
             try
             {
                 if (!DoGenericSetup())               return;
@@ -728,6 +750,7 @@ namespace BK7231Flasher
                 byte[] data = InternalRead(startAddr, length);
                 readResult?.Dispose();
                 readResult = new MemoryStream(data);
+				readFailed = false;
             }
             catch (OperationCanceledException)
             {
@@ -739,6 +762,7 @@ namespace BK7231Flasher
             }
             finally
             {
+				FinishOperationProgress();
                 closePort();
             }
         }

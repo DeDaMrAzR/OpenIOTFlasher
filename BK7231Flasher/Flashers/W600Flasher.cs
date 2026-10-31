@@ -76,9 +76,7 @@ namespace BK7231Flasher
 
 		private bool doGenericSetup()
 		{
-			addLog("Now is: " + DateTime.Now.ToLongDateString() + " " + DateTime.Now.ToLongTimeString() + "." + Environment.NewLine);
-			addLog("Flasher mode: " + chipType + Environment.NewLine);
-			addLog("Going to open port: " + serialName + "." + Environment.NewLine);
+			addLogLine($"Connecting: {serialName}, {chipType}, requested transfer {baudrate} baud.");
 			try
 			{
 				serial = new SerialPort(serialName, 115200);
@@ -95,10 +93,9 @@ namespace BK7231Flasher
 			}
 			catch(Exception ex)
 			{
-				addLog("Port setup failed with " + ex.Message + "!" + Environment.NewLine);
+				addErrorLine("Port setup failed: " + ex.Message.TrimEnd('\r', '\n'));
 				return false;
 			}
-			addLog("Port ready!" + Environment.NewLine);
 			return true;
 		}
 
@@ -283,9 +280,9 @@ namespace BK7231Flasher
 
 		public override void Xm_PacketSent(int sentBytes, int total, int sequence, uint offset)
 		{
-			if((sequence % 4) == 1)
+			if((sequence % 4) == 1 || (total > 0 && sentBytes >= total))
 			{
-				lastXmodemProgressText = $"Writing 0x{offset:X6}...";
+				lastXmodemProgressText = $"Writing: ({(total > 0 ? (long)sentBytes * 100 / total : 0),3}%) {sentBytes}/{total} transfer bytes";
 				logger.setLogProgress(lastXmodemProgressText, Color.Black);
 			}
 			logger.setProgress(sentBytes, total);
@@ -458,6 +455,7 @@ namespace BK7231Flasher
 				if(result == null)
 					throw new IOException(isCancelled ? "W600 flash read was cancelled." : "W600 flash read failed.");
 
+				addLogLine("Verification: secboot remainder before backup reconstruction.");
 				if(!SecbootRemainderMatches(result, profile.Image))
 					throw new InvalidDataException($"The untouched secboot remainder does not match catalogued {profile.Version}; the dump cannot be reconstructed exactly.");
 
@@ -518,8 +516,12 @@ namespace BK7231Flasher
 			string fullPath = "backups/" + fileName;
 			byte[] data = ms.ToArray();
 			File.WriteAllBytes(fullPath, data);
-			addSuccess("Saved W600 flash backup: " + data.Length + " bytes to " + fullPath + "." + Environment.NewLine);
+			addLogLine("Saved: " + data.Length + " bytes to " + fullPath + ".");
 			logger.onReadResultQIOSaved(data, "", fullPath);
+			if (secbootRecoveryRequired)
+				addWarningLine("Backup saved, but secboot recovery is incomplete.");
+			else
+				addSuccess("Read complete." + Environment.NewLine);
 			return true;
 		}
 
@@ -879,7 +881,7 @@ namespace BK7231Flasher
 
 				serial.BaudRate = 115200;
 				logger.setLogProgress((isUpdate
-					? "Read complete."
+					? "Secboot update complete."
 					: $"W600 {profile.Version} secboot restored.") + Environment.NewLine, Color.Green);
 				return true;
 			}
@@ -1044,14 +1046,15 @@ namespace BK7231Flasher
 		{
 			byte[] result = new byte[length];
 			int completed = 0;
+			int lastPercent = -1;
 			string readProgressText = null;
+			addLogLine($"Read range: 0x{address - FlashBase:X6}-0x{address - FlashBase + length - 1:X6} ({length} bytes), at {serial.BaudRate} baud.");
 			ushort sequence = 0x100;
 			while(completed < length && !isCancelled)
 			{
 				int requestLength = Math.Min(chunkSize, length - completed);
 				uint rangeStart = address + (uint)completed;
-				readProgressText = $"Reading 0x{rangeStart - FlashBase:X6}...";
-				logger.setLogProgress(readProgressText, Color.Black);
+
 				byte[] payload = null;
 				string lastError = "no response";
 				bool ok = false;
@@ -1069,7 +1072,7 @@ namespace BK7231Flasher
 				}
 				if(!ok)
 				{
-					logger.setLogProgress(
+					SetOperationProgress(
 						$"W600 UART read failed at 0x{address + (uint)completed:X8}: {lastError}" + Environment.NewLine,
 						Color.Red);
 					return null;
@@ -1078,14 +1081,20 @@ namespace BK7231Flasher
 				completed += payload.Length;
 				sequence++;
 				logger.setProgress(completed, length);
+				int percent = (int)((long)completed * 100 / length);
+				if (percent != lastPercent)
+				{
+					lastPercent = percent;
+					readProgressText = $"Reading: ({percent,3}%) 0x{address - FlashBase + completed:X6}";
+					SetOperationProgress(readProgressText, Color.Black);
+				}
 			}
 			if(isCancelled)
 			{
 				addLogLine("W600 flash read cancelled.");
 				return null;
 			}
-			if(readProgressText != null)
-				logger.setLogProgress(readProgressText + Environment.NewLine, Color.Green);
+			FinishOperationProgress();
 			return result;
 		}
 
@@ -1117,7 +1126,7 @@ namespace BK7231Flasher
 			if(flashInfo != null)
 			{
 				int reportedSize = capacity != 0 ? capacity : flashInfo.szMem;
-				addSuccess(FormatFlashInfo(jedecId, flashInfo.manufacturer, reportedSize) + Environment.NewLine);
+				addSuccess(FormatFlashInfo(jedecId, flashInfo.manufacturer, reportedSize, flashInfo.icName) + Environment.NewLine);
 				if(capacity != 0 && flashInfo.szMem != capacity)
 				{
 					addWarningLine("JEDEC flash size differs from flash list size: JEDEC=" +

@@ -29,13 +29,15 @@ namespace BK7231Flasher
 
         bool bDebugUART;
         MemoryStream ms;
+		bool readFailed;
+		int lastCommandReceivedBytes;
         string lastEncryptionKey;
         BKChipIdentityResult chipIdentity;
         const int DEFAULT_FLASH_SIZE = 0x200000;
         const int BK7252_MAX_FLASH_SIZE = 0x400000;
         const int READ_RESPONSE_HEADER_SIZE = 15;
-        const int BK7252_READ_ATTEMPTS = 20;
-        const int FLASH_READ4K_ATTEMPTS = 20;
+		const int BK7252_READ_ATTEMPTS = 5;
+		const int FLASH_READ4K_ATTEMPTS = 5;
         const int READ_RANGE_ATTEMPTS = 2;
         const int READ_RANGE_CRC_ATTEMPTS = 2;
         const int VERIFIED_PAGE_WRITE_ATTEMPTS = 5;
@@ -584,7 +586,7 @@ namespace BK7231Flasher
             return false;
         }
 
-        byte[] Start_Cmd(byte[] txbuf, int rxLen = 0, float timeout = 0.05f, byte? expectedResponseCommand = null)
+		byte[] Start_Cmd(byte[] txbuf, int rxLen = 0, float timeout = 0.05f, byte? expectedResponseCommand = null, bool quietReadFailure = false)
         {
             try
             {
@@ -604,6 +606,7 @@ namespace BK7231Flasher
                     : 0;
                 var timer = new Stopwatch();
                 timer.Start();
+				lastCommandReceivedBytes = 0;
                 List<byte> received = new List<byte>(rxLen);
                 byte[] readBuffer = new byte[Math.Min(Math.Max(rxLen, 256), 4096)];
                 while (timer.Elapsed.TotalSeconds < transmitTime + timeout * UART_COMMAND_TIMEOUT_MULTIPLIER)
@@ -613,7 +616,8 @@ namespace BK7231Flasher
                         int available = serial.BytesToRead;
                         if (available > 0)
                         {
-                            int readNow = serial.Read(readBuffer, 0, Math.Min(readBuffer.Length, available));
+							int readNow = serial.Read(readBuffer, 0, Math.Min(readBuffer.Length, available));
+							lastCommandReceivedBytes += readNow;
                             for (int i = 0; i < readNow; i++)
                             {
                                 received.Add(readBuffer[i]);
@@ -646,7 +650,7 @@ namespace BK7231Flasher
                         return null;
                     }
                 }
-                if (rxLen > 10)
+				if (rxLen > 10 && (!quietReadFailure || bDebugUART))
                 {
                     addLog("failed with serial.BytesToRead " + serial.BytesToRead + " (expected " + rxLen+")" + Environment.NewLine);
                 }
@@ -1197,6 +1201,8 @@ namespace BK7231Flasher
         }
         public override void doRead(int startSector = 0x000, int sectors = 10, bool fullRead = false)
         {
+			readFailed = true;
+			ms?.Dispose();
             ms = null;
             try
             {
@@ -1204,17 +1210,23 @@ namespace BK7231Flasher
             }
             catch(Exception ex)
             {
-                LogOperationException("Read failed: ", ex);
+				FinishOperationProgress();
+				if(!cancellationToken.IsCancellationRequested)
+					LogOperationException("Read failed: ", ex);
             }
         }
         public override byte[]getReadResult()
         {
+			if(readFailed)
+				return null;
             if (ms == null)
                 return null;
             return ms.ToArray();
         }
         bool saveReadResult(string fileName)
         {
+			if(readFailed || HasSerialConnectionBeenLost || cancellationToken.IsCancellationRequested)
+				return false;
             if(ms == null)
             {
                 if (HasSerialConnectionBeenLost || HasSerialPortOpenFailed || cancellationToken.IsCancellationRequested)
@@ -1227,8 +1239,9 @@ namespace BK7231Flasher
             byte[] dat = ms.ToArray();
             string fullPath = "backups/" + fileName;
             File.WriteAllBytes(fullPath, dat);
-            addSuccess("Wrote " + dat.Length + " to " + fileName + Environment.NewLine);
+			addLogLine($"Saved: {dat.Length} bytes to {fullPath}.");
             logger.onReadResultQIOSaved(dat, lastEncryptionKey, fullPath);
+			addSuccess("Read complete." + Environment.NewLine);
             return true;
         }
         public override bool saveReadResult(int startOffset)
@@ -1249,9 +1262,9 @@ namespace BK7231Flasher
             string fileName = MiscUtils.formatDateNowFileName("readResult_"+chipType+ "_"+typeStr, backupName, "bin");
             return saveReadResult(fileName);
         }
-        bool setBaudRateIfNeeded()
+		bool setBaudRateIfNeeded(Action<string> commandStatus)
         {
-            bool bOk = setBaudrate(baudrate, 200);
+			bool bOk = setBaudrate(baudrate, 200, commandStatus);
             return bOk;
         }
 
@@ -1269,31 +1282,41 @@ namespace BK7231Flasher
                 return false;
             }
             Thread.Sleep(50);
-            int maxAttempts = 10;
+			const int maxAttempts = 5;
+			string lastBaudContext = "no acknowledgement";
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
+					FinishOperationProgress();
                     return false;
                 }
-                addSuccess("Going to set baud rate setting (" + baudrate + ")!" + Environment.NewLine);
+				SetOperationProgress($"Setting baud: attempt {attempt}/{maxAttempts}, requested {baudrate} baud...", Color.DarkOrange);
                 logger.setState("Setting baud rate...", Color.Transparent);
-                if (setBaudRateIfNeeded())
+				if (setBaudRateIfNeeded(status =>
+				{
+					lastBaudContext = status;
+					SetOperationProgress($"Setting baud: attempt {attempt}/{maxAttempts}, requested {baudrate} baud: {status}", Color.DarkOrange);
+				}))
                 {
+					FinishOperationProgress();
+					addSuccess($"Transfer baud established: {baudrate} baud." + Environment.NewLine);
                     Thread.Sleep(50);
                     return true;
                 }
                 if (cancellationToken.IsCancellationRequested)
                 {
+					FinishOperationProgress();
                     return false;
                 }
-                addError("Failed to set baud rate!" + Environment.NewLine);
-                logger.setState("Failed to set baud rate!", Color.Red);
                 if (attempt < maxAttempts)
                 {
                     Thread.Sleep(50);
                 }
             }
+			FinishOperationProgress();
+			addErrorLine($"Failed to establish requested {baudrate} baud after {maxAttempts} attempts: {lastBaudContext}");
+			logger.setState("Failed to set baud rate!", Color.Red);
             return false;
         }
         
@@ -1308,14 +1331,12 @@ namespace BK7231Flasher
                 closePortDeferredForProtectionRestore = false;
             }
             originalFlashProtectionBits = null;
-            addLog("Now is: " + DateTime.Now.ToLongDateString() + " " + DateTime.Now.ToLongTimeString() + "." + Environment.NewLine);
-            addLog("Flasher mode: " + chipType + Environment.NewLine);
-            addLog("Going to open port: " + serialName + "." + Environment.NewLine);
+			addLogLine("Connecting to " + serialName + "...");
             if (openPort())
             {
                 return false;
             }
-            addSuccess("Serial port open!" + Environment.NewLine);
+
             if (doGetBusAndSetBaudRate() == false)
             {
                 return false;
@@ -1377,10 +1398,11 @@ namespace BK7231Flasher
                 if (chipType != BKType.BK7236 && chipType != BKType.BK7238 && chipType != BKType.BK7239N
                     && chipType != BKType.BK7252N && chipType != BKType.BK7258)
                 {
-                    addLog("Going to read encryption key..." + Environment.NewLine);
+
                     string key = readEncryptionKey(out var coeffs);
-                    addLog("Encryption key read done!" + Environment.NewLine);
-                    addLog("Encryption key: " + key + Environment.NewLine);
+					addLogLine("Encryption key acquired.");
+					if(bDebugUART)
+						addLog("Encryption key: " + key + Environment.NewLine);
                     bool enforceKeyCheck = chipType != BKType.BK7231M;
                     string otherMode;
                     string expectedKey;
@@ -1460,7 +1482,7 @@ namespace BK7231Flasher
             {
                 return true;
             }
-            addLog("Reading device flash MID..." + Environment.NewLine);
+
             deviceMID = GetFlashMID();
             if (deviceMID == 0)
             {
@@ -1474,7 +1496,7 @@ namespace BK7231Flasher
                 return false;
             }
             setFlashSize(flashInfo.szMem);
-            addSuccess(FormatFlashInfo(deviceMID, flashInfo.manufacturer, flashInfo.szMem) + Environment.NewLine);
+			addSuccess(FormatFlashInfo(deviceMID, flashInfo.manufacturer, flashInfo.szMem, flashInfo.icName) + Environment.NewLine);
             return true;
         }
 
@@ -1663,25 +1685,29 @@ namespace BK7231Flasher
             logger.setState("Writing...", Color.Transparent);
             if (data != null)
             {
+				addLogLine($"Write range: 0x{startSector:X6}-0x{startSector + data.Length - 1:X6} ({data.Length} bytes), at {serial.BaudRate} baud.");
+				int lastPercent = -1;
                 for (int sec = 0; sec < sectors; sec++)
                 {
                     int secAddr = startSector + SECTOR_SIZE * sec;
-                    string writeProgress = "Writing " + formatHex(secAddr) + "...";
-                    logger.setLogProgress(writeProgress, Color.Black);
                     bool bOk = usesDirectFlashAccessProfile()
                         ? writePageWithCRCVerification(secAddr, data, SECTOR_SIZE * sec)
                         : writeSector4K(secAddr, data, SECTOR_SIZE * sec);
                     if (bOk == false)
                     {
                         logger.setState("Writing error!", Color.Red);
-                        logger.setLogProgress(writeProgress + " Failed!", Color.Red);
-                        addError(Environment.NewLine + "Writing sector " + formatHex(secAddr) + " failed!" + Environment.NewLine);
+						addErrorLine("Writing sector " + formatHex(secAddr) + " failed!");
                         return false;
                     }
-                    logger.setLogProgress(writeProgress + " Ok!", Color.Green);
                     logger.setProgress(sec + 1, sectors);
+					int percent = (int)((long)(sec + 1) * 100 / sectors);
+					if (percent != lastPercent)
+					{
+						lastPercent = percent;
+						SetOperationProgress($"Writing: ({percent,3}%) 0x{secAddr + SECTOR_SIZE:X6}", Color.Black);
+					}
                 }
-                addLog(Environment.NewLine);
+				FinishOperationProgress();
                 if (usesDirectFlashAccessProfile())
                 {
                     addSuccess("All written pages passed independent CRC verification." + Environment.NewLine);
@@ -1717,6 +1743,7 @@ namespace BK7231Flasher
                 addLog("NOTE: the OBK config writing is disabled, so not writing anything extra." + Environment.NewLine);
             }
             logger.setState("Write success!" + Environment.NewLine, Color.Green);
+			addSuccess("Write complete." + Environment.NewLine);
             return true;
         }
         bool doTestReadWriteInternal(int startSector = 0x11000, int sectors = 10)
@@ -1806,30 +1833,34 @@ namespace BK7231Flasher
             }
             addLog(Environment.NewLine);
             addLog("All selected sectors erased!" + Environment.NewLine);
+			addLogLine($"Write range: 0x{startSector:X6}-0x{startSector + data.Length - 1:X6} ({data.Length} bytes), at {serial.BaudRate} baud.");
+			int lastPercent = -1;
             for (int sec = 0; sec < sectors; sec++)
             {
                 int secAddr = startSector + SECTOR_SIZE * sec;
-                string writeProgress = "Writing " + formatHex(secAddr) + "...";
-                logger.setLogProgress(writeProgress, Color.Black);
                 bool bOk = usesDirectFlashAccessProfile()
                     ? writePageWithCRCVerification(secAddr, data, SECTOR_SIZE * sec)
                     : writeSector4K(secAddr, data, SECTOR_SIZE * sec);
                 if (bOk == false)
                 {
                     logger.setState("Write sector failed!", Color.Red);
-                    logger.setLogProgress(writeProgress + " Failed!", Color.Red);
-                    addError(Environment.NewLine + "Writing sector " + formatHex(secAddr) + " failed!" + Environment.NewLine);
+					addErrorLine("Writing sector " + formatHex(secAddr) + " failed!");
                     return false;
                 }
-                logger.setLogProgress(writeProgress + " Ok!", Color.Green);
                 logger.setProgress(sec + 1, sectors);
+				int percent = (int)((long)(sec + 1) * 100 / sectors);
+				if (percent != lastPercent)
+				{
+					lastPercent = percent;
+					SetOperationProgress($"Writing: ({percent,3}%) 0x{secAddr + SECTOR_SIZE:X6}", Color.Black);
+				}
             }
-            addLog(Environment.NewLine);
+			FinishOperationProgress();
             if (usesDirectFlashAccessProfile() == false && checkCRC(startSector, sectors, data) == false)
             {
                 return false;
             }
-            addSuccess("Write success!");
+			addSuccess("Write complete." + Environment.NewLine);
             return true;
         }
         public byte[] ReadRomTarget(RomReadTarget target)
@@ -2163,7 +2194,8 @@ namespace BK7231Flasher
                 {
                     int regb = (reg & 0xff);
                     efuse[addr] = (byte)regb;
-                    Console.WriteLine($"Efuse ok at {addr} (0x{addr:X}) is {regb} (0x{regb:X})");
+					if(bDebugUART)
+						Console.WriteLine($"Efuse ok at {addr} (0x{addr:X}) is {regb} (0x{regb:X})");
                 }
                 else
                 {
@@ -2180,7 +2212,8 @@ namespace BK7231Flasher
             }
 
             string encryptionKey = string.Join(" ", Array.ConvertAll(coeffs, c => c.ToString("x8")));
-            Console.WriteLine("Encryption Key: " + encryptionKey);
+			if(bDebugUART)
+				Console.WriteLine("Encryption Key: " + encryptionKey);
             return encryptionKey;
         }
         static void setFlashSize(int size)
@@ -2225,7 +2258,7 @@ namespace BK7231Flasher
         {
             return data != null && data.All(b => b == value);
         }
-        byte[] readSectorPayload(int wireAddr, int retries = 2, float timeout = 15)
+		byte[] readSectorPayload(int wireAddr, int retries = 2, float timeout = 15, bool inlineProgress = false)
         {
             for(int attempt = 0; attempt <= retries; attempt++)
             {
@@ -2233,16 +2266,22 @@ namespace BK7231Flasher
                 {
                     return null;
                 }
-                byte[] res = readSector(wireAddr, timeout);
+				byte[] res = readSector(wireAddr, timeout, inlineProgress);
                 if(res == null)
                 {
-                    addWarning("Read " + formatHex(wireAddr) + " returned no data"
+					if(inlineProgress)
+						SetOperationProgress($"Reading: retry {attempt + 1}/{retries + 1} at 0x{wireAddr:X6}, received {lastCommandReceivedBytes}/{CalcRxLength_FlashRead4K()} bytes", Color.DarkOrange);
+					else
+						addWarning("Read " + formatHex(wireAddr) + " returned no data"
                         + (attempt < retries ? ", retrying." : ".") + Environment.NewLine);
                     continue;
                 }
                 if(res.Length < READ_RESPONSE_HEADER_SIZE + SECTOR_SIZE)
                 {
-                    addWarning("Read response for " + formatHex(wireAddr) + " was too short (" + res.Length + " bytes)"
+					if(inlineProgress)
+						SetOperationProgress($"Reading: retry {attempt + 1}/{retries + 1} at 0x{wireAddr:X6}, short response {res.Length} bytes", Color.DarkOrange);
+					else
+						addWarning("Read response for " + formatHex(wireAddr) + " was too short (" + res.Length + " bytes)"
                         + (attempt < retries ? ", retrying." : ".") + Environment.NewLine);
                     continue;
                 }
@@ -2480,19 +2519,18 @@ namespace BK7231Flasher
             }
             int step = SECTOR_SIZE;
             bool directFlashAccessProfile = usesDirectFlashAccessProfile();
-            addLog("Going to start reading at offset " + formatHex(startSector) + "..." + Environment.NewLine);
+			readFailed = true;
+			addLogLine($"Read range: 0x{startSector:X6}-0x{startSector + (long)sectors * step - 1:X6} ({(long)sectors * step} bytes) at {serial.BaudRate} baud.");
+			SetOperationProgress($"Reading: (  0%) 0x{startSector:X6}", Color.Black);
             for (int i = 0; i < sectors; i++)
             {
                 int logicalAddr = startSector + step * i;
                 int wireAddr = translateReadAddressForChip(logicalAddr);
-                string readProgress = wireAddr != logicalAddr
-                    ? "Reading " + formatHex(logicalAddr) + " -> " + formatHex(wireAddr) + "..."
-                    : "Reading " + formatHex(logicalAddr) + "...";
-                logger.setLogProgress(readProgress, Color.Black);
+
                 bool bOk;
                 if (directFlashAccessProfile)
                 {
-                    byte[] payload = readSectorPayload(wireAddr, FLASH_READ4K_ATTEMPTS - 1, getFlashRead4KTimeout());
+					byte[] payload = readSectorPayload(wireAddr, FLASH_READ4K_ATTEMPTS - 1, getFlashRead4KTimeout(), true);
                     bOk = payload != null;
                     if(bOk)
                     {
@@ -2501,7 +2539,7 @@ namespace BK7231Flasher
                 }
                 else if(chipType == BKType.BK7252)
                 {
-                    byte[] payload = readSectorPayload(wireAddr, BK7252_READ_ATTEMPTS - 1);
+					byte[] payload = readSectorPayload(wireAddr, BK7252_READ_ATTEMPTS - 1, inlineProgress: true);
                     bOk = payload != null;
                     if(bOk)
                     {
@@ -2515,14 +2553,17 @@ namespace BK7231Flasher
                 if (bOk == false)
                 {
                     logger.setState("Reading failed.", Color.Red);
-                    logger.setLogProgress(readProgress + " Failed!", Color.Red);
-                    addError(Environment.NewLine + "Failed reading page " + formatHex(logicalAddr) + "." + Environment.NewLine);
+					FinishOperationProgress();
+					if(!cancellationToken.IsCancellationRequested)
+						addError("Failed reading page " + formatHex(logicalAddr) + "." + Environment.NewLine);
                     return null;
                 }
-                logger.setLogProgress(readProgress + " Ok!", Color.Green);
+				SetOperationProgress($"Reading: ({(i + 1) * 100 / sectors,3}%) 0x{startSector + (long)(i + 1) * step:X6}", Color.Black);
                 logger.setProgress(i + 1, sectors);
             }
-            addLog(Environment.NewLine + "Read operation finished; verifying result..." + Environment.NewLine);
+			FinishOperationProgress();
+			addLogLine();
+			addLogLine("Verification...");
             byte[] result = tempResult.ToArray();
             if (directFlashAccessProfile == false && skipBlankHeuristic == false
                 && checkAbnormal(startSector, sectors, result) == false)
@@ -2581,9 +2622,9 @@ namespace BK7231Flasher
             else
             {
                 logger.setState("Reading success!", Color.Green);
-                addSuccess("All read!" + Environment.NewLine);
+
             }
-            addLog("Loaded total " + formatHex(sectors * step) + " bytes " + Environment.NewLine);
+			readFailed = false;
             return tempResult;
         }
         bool checkAbnormal(int startSector, int total, byte[] array)
@@ -2623,7 +2664,7 @@ namespace BK7231Flasher
         CRCVerificationResult checkCRCResult(int startSector, int total, byte [] array, bool failureIsRecoverable = false)
         {
             logger.setState("Doing CRC verification...", Color.Transparent);
-            addLog("Starting CRC check for " + total + " sectors, starting at offset 0x" + startSector.ToString("X2") + Environment.NewLine);
+
             int last = startSector + total * SECTOR_SIZE;
             CRCVerificationResult result = verifyCRC(startSector, last, array, out uint bk_crc, out uint our_crc);
             if (result == CRCVerificationResult.TransportError)
@@ -2658,7 +2699,7 @@ namespace BK7231Flasher
                 }
                 return result;
             }
-            addSuccess("CRC matches " + formatHex(bk_crc) + "!" + Environment.NewLine);
+			addSuccess("CRC32 verification passed." + Environment.NewLine);
             return result;
         }
 
@@ -2932,13 +2973,6 @@ namespace BK7231Flasher
         void doReadInternal(int startSector = 0x000, int sectors = 10, bool fullRead = false)
         {
             logger.setProgress(0, sectors);
-            addLog(Environment.NewLine + "Starting read!" + Environment.NewLine);
-            addLog("Read parms: start 0x"+
-                (startSector ).ToString("X2")
-                + " (sector " + startSector / BK7231Flasher.SECTOR_SIZE + "), len 0x" +
-                (sectors * BK7231Flasher.SECTOR_SIZE).ToString("X2")
-                + " (" + sectors + " sectors)"
-                + Environment.NewLine);
             if (doGenericSetup(false) == false)
             {
                 return;
@@ -3166,11 +3200,11 @@ namespace BK7231Flasher
             //addLog("Failed!" + Environment.NewLine);
             return false;
         }
-        byte[] readSector(int addr, float timeout = 15)
+		byte[] readSector(int addr, float timeout = 15, bool quietReadFailure = false)
         {
             //addLog("Starting read sector for " + addr + Environment.NewLine);
             byte[] txbuf = BuildCmd_FlashRead4K(addr);
-            byte[] rxbuf = Start_Cmd(txbuf, CalcRxLength_FlashRead4K(), timeout);
+			byte[] rxbuf = Start_Cmd(txbuf, CalcRxLength_FlashRead4K(), timeout, quietReadFailure: quietReadFailure);
             if (rxbuf != null)
             {
                 //addLog("Loaded " + rxbuf.Length + " bytes!" + Environment.NewLine);
@@ -3234,7 +3268,7 @@ namespace BK7231Flasher
             byte[] rxbuf = Start_Cmd(txbuf, CalcRxLength_FlashErase(), timeout);
             return rxbuf != null && CheckRespond_FlashErase(rxbuf, addr, szcmd);
         }
-        bool setBaudrate(int baudrate, int delay_ms)
+		bool setBaudrate(int baudrate, int delay_ms, Action<string> commandStatus)
         {
             byte[] txbuf = BuildCmd_SetBaudRate(baudrate, delay_ms);
             Start_Cmd(txbuf,0, 0.5f);
@@ -3243,12 +3277,12 @@ namespace BK7231Flasher
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
-                    addWarning("Baud rate change cancelled while waiting for serial output." + Environment.NewLine);
+					commandStatus("Baud rate change cancelled while waiting for serial output.");
                     return false;
                 }
                 if (serial == null || serial.IsOpen == false)
                 {
-                    addError("Serial port closed while changing baud rate." + Environment.NewLine);
+					commandStatus("Serial port closed while changing baud rate.");
                     return false;
                 }
                 if (serial.BytesToWrite <= 0)
@@ -3257,7 +3291,7 @@ namespace BK7231Flasher
                 }
                 if (drainTimer.ElapsedMilliseconds >= SET_BAUD_DRAIN_TIMEOUT_MS)
                 {
-                    addError("Timed out waiting for serial output before changing baud rate." + Environment.NewLine);
+					commandStatus("Timed out waiting for serial output before changing baud rate.");
                     return false;
                 }
                 Thread.Sleep(1);
@@ -3265,7 +3299,7 @@ namespace BK7231Flasher
             Thread.Sleep(delay_ms/2);
             int prev = serial.BaudRate;
             serial.BaudRate = baudrate;
-            byte[] rxbuf = Start_Cmd(null, CalcRxLength_SetBaudRate(), 0.5f, (byte)CommandCode.SetBaudRate);
+			byte[] rxbuf = Start_Cmd(null, CalcRxLength_SetBaudRate(), 0.5f, (byte)CommandCode.SetBaudRate, quietReadFailure: true);
             if (rxbuf != null)
             {
                 if (CheckRespond_SetBaudRate(rxbuf, baudrate, delay_ms))
@@ -3273,7 +3307,8 @@ namespace BK7231Flasher
                     return true;
                 }
             }
-            addWarning("Set-baud acknowledgement was missing or invalid; checking target at " + baudrate + " baud." + Environment.NewLine);
+			string acknowledgementContext = $"Set-baud acknowledgement missing or invalid, received {lastCommandReceivedBytes}/{CalcRxLength_SetBaudRate()} bytes";
+			commandStatus(acknowledgementContext + $"; checking target at {baudrate} baud.");
             for (int attempt = 0; attempt < 3; attempt++)
             {
                 if (cancellationToken.IsCancellationRequested || serial == null || serial.IsOpen == false)
@@ -3282,10 +3317,11 @@ namespace BK7231Flasher
                 }
                 if (linkCheck(0.05f))
                 {
-                    addSuccess("Link check confirmed communication at " + baudrate + " baud; continuing." + Environment.NewLine);
+					commandStatus("Link check confirmed communication at " + baudrate + " baud.");
                     return true;
                 }
             }
+			commandStatus(acknowledgementContext + $"; target link checks failed at {baudrate} baud.");
             if (serial != null && serial.IsOpen)
             {
                 serial.BaudRate = prev;

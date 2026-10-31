@@ -12,6 +12,7 @@ namespace BK7231Flasher
 		const int EcrRomBase = 0x00000000;
 		const int EcrRomSize = 0x00010000;
 		const int EcrEfuseSize = 0x80;
+		bool portSetupFailed;
 
 		static readonly byte CMD_RAM_DOWNLOAD = 0x01;
 		//static readonly byte CMD_FLASH_DOWNLOAD = 0x02;
@@ -25,9 +26,9 @@ namespace BK7231Flasher
 
 		protected override bool doGenericSetup()
 		{
-			addLog("Now is: " + DateTime.Now.ToLongDateString() + " " + DateTime.Now.ToLongTimeString() + "." + Environment.NewLine);
-			addLog("Flasher mode: " + chipType + Environment.NewLine);
-			addLog("Going to open port: " + serialName + "." + Environment.NewLine);
+			portSetupFailed = false;
+			addLogLine("Connecting to " + serialName + "...");
+			addLogLine($"Boot communication uses 115200 baud; requested flash transfer baud is {baudrate}.");
 			try
 			{
 				cancellationToken.ThrowIfCancellationRequested();
@@ -36,15 +37,38 @@ namespace BK7231Flasher
 				serial.DiscardInBuffer();
 				serial.DiscardOutBuffer();
 				serial.ReadTimeout = 10000;
-				xm = new XMODEM(serial, XMODEM.Variants.XModem1K, 0xFF);
+				xm = new XMODEM(serial, XMODEM.Variants.XModem1K, 0xFF)
+				{
+					ReceiverTimeoutMillisec = 1000,
+					ReceiverMaxConsecutiveRetries = 5,
+					ReceiverWriteTimeoutMillisec = 1000
+				};
+				cancellationToken.ThrowIfCancellationRequested();
+			}
+			catch(OperationCanceledException) when(cancellationToken.IsCancellationRequested)
+			{
+				portSetupFailed = true;
+				addWarningLine("Port setup cancelled.");
+				return false;
 			}
 			catch(Exception ex)
 			{
-				addLog("Port setup failed with " + ex.Message + "!" + Environment.NewLine);
+				portSetupFailed = true;
+				string detail = ex.Message.TrimEnd('\r', '\n');
+				if(cancellationToken.IsCancellationRequested)
+					addWarningLine("Port setup ended after cancellation: " + detail);
+				else
+					addErrorLine("Port setup failed: " + detail);
 				return false;
 			}
-			addLog("Port ready!" + Environment.NewLine);
 			return true;
+		}
+
+		public override bool saveReadResult(int startOffset)
+		{
+			if(portSetupFailed || cancellationToken.IsCancellationRequested)
+				return false;
+			return base.saveReadResult(startOffset);
 		}
 
 		private bool Connect()
@@ -61,10 +85,11 @@ namespace BK7231Flasher
 
 		protected override bool Sync()
 		{
-			var flashID = ReadFlashId(true);
+			var flashID = ReadFlashId(true, out var rawFlashId);
 			if(flashID != null)
 			{
 				if(!CheckChipInfo()) return false;
+				PrintFlashInfo(rawFlashId);
 				addLogLine("Stub is already uploaded!");
 				return true;
 			}
@@ -72,13 +97,17 @@ namespace BK7231Flasher
 			int attempts = 0;
 			while(attempts++ < 500)
 			{
-				addLog($"Sync attempt {attempts}/500 ");
+				logger.setLogProgress($"Synchronizing: attempt {attempts}...", Color.Black);
 				int tries = 50;
 				serial.ReadTimeout = 50;
 				serial.DiscardInBuffer();
 				while(tries-- > 0)
 				{
-					if(isCancelled) return false;
+					if(isCancelled)
+					{
+						addLogLine();
+						return false;
+					}
 					serial.Write("cnys");
 					var t = 0;
 					try
@@ -88,12 +117,12 @@ namespace BK7231Flasher
 					catch { }
 					if(t == 0x01 || t == 0xFF)
 					{
-						logger.addLog("... OK!" + Environment.NewLine, Color.Green);
+						logger.setLogProgress($"Synchronized on attempt {attempts}." + Environment.NewLine, Color.Green);
 						return UploadStub();
 					}
 				}
-				addWarningLine("... failed, will retry!");
 			}
+			logger.setLogProgress("Synchronization failed after 500 attempts." + Environment.NewLine, Color.Red);
 			return false;
 		}
 
@@ -140,9 +169,10 @@ namespace BK7231Flasher
 			}
 			Thread.Sleep(10);
 			serial.DiscardInBuffer();
-			var flashID = ReadFlashId();
+			var flashID = ReadFlashId(false, out var rawFlashId);
 			if(tries == 0 || flashID == null) return false;
 			if(!CheckChipInfo()) return false;
+			PrintFlashInfo(rawFlashId);
 			return true;
 		}
 

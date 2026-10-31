@@ -16,9 +16,7 @@ namespace BK7231Flasher
 
 		protected override bool doGenericSetup()
 		{
-			addLog("Now is: " + DateTime.Now.ToLongDateString() + " " + DateTime.Now.ToLongTimeString() + "." + Environment.NewLine);
-			addLog("Flasher mode: " + chipType + Environment.NewLine);
-			addLog("Going to open port: " + serialName + "." + Environment.NewLine);
+			addLogLine($"Connecting: {serialName}, {chipType}, requested transfer {baudrate} baud.");
 			try
 			{
 				cancellationToken.ThrowIfCancellationRequested();
@@ -39,10 +37,9 @@ namespace BK7231Flasher
 			}
 			catch(Exception ex)
 			{
-				addLog("Port setup failed with " + ex.Message + "!" + Environment.NewLine);
+				addErrorLine("Port setup failed: " + ex.Message.TrimEnd('\r', '\n'));
 				return false;
 			}
-			addLog("Port ready!" + Environment.NewLine);
 			return true;
 		}
 
@@ -260,7 +257,7 @@ namespace BK7231Flasher
 				if(rwMode == WriteMode.ReadAndWrite)
 				{
 					sectors = flashSizeMB * 256;
-					addLogLine($"Flash size detected: {flashSizeMB}MB");
+					addSuccess($"Detected flash: {flashSizeMB} MiB ({(long)flashSizeMB * 1024 * 1024} bytes)." + Environment.NewLine);
 					byte[] result = InternalRead(startSector, sectors);
 					if(result == null)
 						return;

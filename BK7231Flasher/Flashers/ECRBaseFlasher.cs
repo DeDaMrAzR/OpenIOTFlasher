@@ -51,9 +51,15 @@ namespace BK7231Flasher
 		protected int flashSizeMB = 4;
 
 		protected MemoryStream ms;
+		protected bool readFailed;
 
 		public ECRBaseFlasher(CancellationToken ct) : base(ct)
 		{
+		}
+
+		protected override bool KeepSerialPortOpenForCancellationRecovery()
+		{
+			return xm?.IsReceiving == true;
 		}
 
 		protected abstract bool doGenericSetup();
@@ -121,26 +127,37 @@ namespace BK7231Flasher
 
 		public override void doRead(int startSector = 0x000, int sectors = 10, bool fullRead = false)
 		{
-			if(sectors == 0 && !fullRead)
+			readFailed = true;
+			ms?.Dispose();
+			ms = null;
+			try
 			{
-				addErrorLine($"Read length cannot be zero!");
-				return;
-			}
-			if(doGenericSetup() == false)
-			{
-				return;
-			}
-			if(Sync())
-			{
-				if(fullRead)
+				if(sectors == 0 && !fullRead)
 				{
-					sectors = flashSizeMB * 256;
+					addErrorLine($"Read length cannot be zero!");
+					return;
 				}
-				byte[] res = InternalRead(startSector, sectors);
-				if(res != null)
-					ms = new MemoryStream(res);
+				if(doGenericSetup() == false)
+				{
+					return;
+				}
+				if(Sync())
+				{
+					if(fullRead)
+					{
+						sectors = flashSizeMB * 256;
+					}
+					byte[] res = InternalRead(startSector, sectors);
+					if(res != null)
+						ms = new MemoryStream(res);
+				}
 			}
-			return;
+			catch(Exception exception)
+			{
+				readFailed = true;
+				if(!cancellationToken.IsCancellationRequested)
+					LogOperationException("Read failed: ", exception);
+			}
 		}
 
 		public override void doWrite(int startSector, byte[] data)
@@ -157,6 +174,8 @@ namespace BK7231Flasher
 		
 		public override byte[] getReadResult()
 		{
+			if(readFailed)
+				return null;
 			return ms?.ToArray();
 		}
 
@@ -283,6 +302,8 @@ namespace BK7231Flasher
 
 		protected byte[] InternalRead(int addr, int sectors)
 		{
+			readFailed = true;
+			bool readProgressActive = false;
 			if(sectors == 0)
 			{
 				addErrorLine($"Read length cannot be zero!");
@@ -291,21 +312,41 @@ namespace BK7231Flasher
 			var offset = addr;
 			var toRead = sectors * 0x1000;
 			int startAmount = sectors * BK7231Flasher.SECTOR_SIZE;
+			int lastDisplayedPercent = 0;
+			string FormatReadProgress(int received)
+			{
+				if(bUseCompressionIfPossible)
+					return $"Reading: {received} compressed transfer bytes received";
+				int completed = Math.Min(received, startAmount);
+				return $"Reading: ({(long)completed * 100 / startAmount,3}%) 0x{addr + completed:X6}";
+			}
 			void Xm_PacketReceived(XMODEM sender, byte[] packet, bool endOfFileDetected)
 			{
-				if(((startAmount - toRead) % 0x1000) == 0)
-				{
-					addLog($"0x{offset:X}... ");
-				}
 				offset += packet.Length;
 				toRead -= packet.Length;
 				if(!isCancelled && !bUseCompressionIfPossible)
 					logger.setProgress(startAmount - toRead, startAmount);
+				if(!isCancelled)
+				{
+					int received = startAmount - toRead;
+					if(bUseCompressionIfPossible)
+						logger.setLogProgress(FormatReadProgress(received), Color.Black);
+					else
+					{
+						int percent = (int)((long)Math.Min(received, startAmount) * 100 / startAmount);
+						if(percent != lastDisplayedPercent)
+						{
+							lastDisplayedPercent = percent;
+							logger.setLogProgress(FormatReadProgress(received), Color.Black);
+						}
+					}
+				}
 			}
 			try
 			{
 				if(!SetBaud(baudrate))
 					return null;
+				addLogLine($"Read range: 0x{addr:X6}-0x{addr + startAmount - 1:X6} ({startAmount} bytes) at {serial.BaudRate} baud.");
 				byte[] ret = new byte[startAmount];
 				logger.setProgress(0, sectors);
 				logger.setState("Reading", Color.White);
@@ -343,22 +384,33 @@ namespace BK7231Flasher
 				}
 				if(res == null)
 					return null;
+				logger.setLogProgress(FormatReadProgress(0), Color.Black);
+				readProgressActive = true;
 				var stream = new MemoryStream();
 				xm.PacketReceived += Xm_PacketReceived;
 				var sw = new Stopwatch();
+				int previousReceiveRetries = xm.ReceiverMaxConsecutiveRetries;
 
 				try
 				{
+					xm.ReceiverMaxConsecutiveRetries = 5;
 					sw.Start();
 					var tries = 3;
 					while(tries-- >= 0)
 					{
-						var recv = xm.Receive(stream);
+						var recv = xm.Receive(stream, cancellationToken);
 						//if(recv == XMODEM.TerminationReasonEnum.CancelNotificationReceived) continue;
 						//else 
 						if(recv != XMODEM.TerminationReasonEnum.EndOfFile)
 						{
-							addErrorLine($"Read failed with {recv}");
+							addLogLine();
+							readProgressActive = false;
+							if(recv == XMODEM.TerminationReasonEnum.UserCancelled || cancellationToken.IsCancellationRequested)
+								logger.setState("Read cancelled", Color.DarkOrange);
+							else if(recv == XMODEM.TerminationReasonEnum.TooManyRetries || recv == XMODEM.TerminationReasonEnum.FileInitiationTimeout)
+								addErrorLine("UART read stopped: missing or invalid data exceeded the receive retry limit.");
+							else
+								addErrorLine($"Read failed with {recv}");
 							return null;
 						}
 						else
@@ -374,10 +426,15 @@ namespace BK7231Flasher
 				finally
 				{
 					sw.Stop();
+					xm.ReceiverMaxConsecutiveRetries = previousReceiveRetries;
 					xm.PacketReceived -= Xm_PacketReceived;
 					stream.Dispose();
+					if(readProgressActive)
+					{
+						addLogLine();
+						readProgressActive = false;
+					}
 				}
-				logger.addLog(Environment.NewLine + $"Flash read took {sw.ElapsedMilliseconds} ms" + Environment.NewLine, Color.Gray);
 				if(isCancelled) return null;
 				if(bUseCompressionIfPossible)
 				{
@@ -390,21 +447,51 @@ namespace BK7231Flasher
 					addErrorLine($"Flash read returned {ret.Length} bytes; expected {startAmount} bytes.");
 					return null;
 				}
-				addLogLine("Getting hash...");
+				if(bUseCompressionIfPossible)
+					logger.setLogProgress($"Reading: (100%) 0x{addr + startAmount:X6}" + Environment.NewLine, Color.Black);
+				addLogLine();
+				addLogLine("Verification...");
 				if(!CheckHash(addr, startAmount, ret))
 				{
 					if(!bIgnoreCRCErr)
 						return null;
+					addWarningLine("Verification failed; continuing because verification errors are ignored in the current settings.");
 				}
 				logger.setProgress(sectors, sectors);
 				logger.setState("Read done", Color.DarkGreen);
-				addLogLine("Read complete!");
+				readFailed = false;
 				return ret;
+			}
+			catch(Exception exception)
+			{
+				if(readProgressActive)
+					addLogLine();
+				if(cancellationToken.IsCancellationRequested)
+				{
+					logger.setState("Read cancelled", Color.DarkOrange);
+					if(!(exception is OperationCanceledException))
+						addWarningLine("UART read ended after cancellation: " + exception.Message.TrimEnd('\r', '\n'));
+				}
+				else
+					LogOperationException(exception is TimeoutException ? "UART receive timed out: " : "Read failed: ", exception);
+				return null;
 			}
 			finally
 			{
-				Thread.Sleep(1);
-				SetBaud(115200);
+				if(!readFailed && !HasSerialConnectionBeenLost && !cancellationToken.IsCancellationRequested)
+				{
+					try
+					{
+						Thread.Sleep(1);
+						if(serial != null && serial.IsOpen && !SetBaud(115200))
+							addWarningLine("Unable to restore UART baud after the read.");
+					}
+					catch(Exception exception)
+					{
+						readFailed = true;
+						LogOperationException("Read cleanup failed: ", exception);
+					}
+				}
 			}
 		}
 
@@ -508,9 +595,20 @@ namespace BK7231Flasher
 
 		protected bool InternalWrite(int addr, byte[] data, int len = -1)
 		{
+			int lastPercent = -1;
+			XMODEM.PacketSentEventHandler writeProgress = (sent, total, sequence, offset) =>
+			{
+				logger.setProgress(sent, total);
+				int percent = total > 0 ? (int)((long)sent * 100 / total) : 0;
+				if (percent == lastPercent) return;
+				lastPercent = percent;
+				SetOperationProgress(bUseCompressionIfPossible
+					? $"Writing: {sent} compressed bytes acknowledged"
+					: $"Writing: ({percent,3}%) 0x{addr + sent:X6}", Color.Black);
+			};
 			try
 			{
-				xm.PacketSent += Xm_PacketSent;
+				xm.PacketSent += writeProgress;
 				if(!SetBaud(baudrate))
 					return false;
 				if(len < 0)
@@ -518,7 +616,7 @@ namespace BK7231Flasher
 				var hlen = len;
 				logger.setProgress(0, len);
 				//doErase(addr, (len + 4095) / 4096);
-				addLogLine("Starting flash write " + len);
+				addLogLine($"Write range: 0x{addr:X6}-0x{addr + len - 1:X6} ({len} bytes), at {serial.BaudRate} baud.");
 				logger.setState("Writing", Color.White);
 				var cmd = new byte[8];
 				cmd[0] = (byte)(addr & 0xFF);
@@ -559,7 +657,7 @@ namespace BK7231Flasher
 					ret = xm.Send(data, (uint)addr);
 					sw.Stop();
 				}
-				logger.addLog(Environment.NewLine + $"Flash write took {sw.ElapsedMilliseconds} ms" + Environment.NewLine, Color.Gray);
+				FinishOperationProgress();
 				if(ret != len)
 				{
 					addErrorLine($"Write failed ({xm.TerminationReason})! Expected sent bytes: {len}, really sent: {ret}");
@@ -568,18 +666,19 @@ namespace BK7231Flasher
 					Thread.Sleep(100);
 					return false;
 				}
-				addLogLine("Getting hash...");
+				addLogLine("Verification...");
 				if(!CheckHash(addr, hlen, data))
 				{
 					return false;
 				}
 				logger.setState("Writing done", Color.DarkGreen);
-				addLogLine("Done flash write " + len);
+				addSuccess("Write complete." + Environment.NewLine);
 				return true;
 			}
 			finally
 			{
-				xm.PacketSent -= Xm_PacketSent;
+				xm.PacketSent -= writeProgress;
+				FinishOperationProgress();
 				Thread.Sleep(1);
 				SetBaud(115200);
 			}
@@ -587,6 +686,8 @@ namespace BK7231Flasher
 
 		bool saveReadResult(string fileName)
 		{
+			if(readFailed || HasSerialConnectionBeenLost || cancellationToken.IsCancellationRequested)
+				return false;
 			if(ms == null)
 			{
 				addError("There was no result to save." + Environment.NewLine);
@@ -595,8 +696,9 @@ namespace BK7231Flasher
 			byte[] dat = ms.ToArray();
 			string fullPath = "backups/" + fileName;
 			File.WriteAllBytes(fullPath, dat);
-			addSuccess("Wrote " + dat.Length + " to " + fileName + Environment.NewLine);
+			addLogLine($"Saved: {dat.Length} bytes to {fullPath}.");
 			logger.onReadResultQIOSaved(dat, "", fullPath);
+			addSuccess("Read complete." + Environment.NewLine);
 			return true;
 		}
 
@@ -630,17 +732,38 @@ namespace BK7231Flasher
 
 		protected byte[] ReadFlashId(bool isErrorExpected = false)
 		{
+			var flashID = ReadFlashId(isErrorExpected, out var rawFlashId);
+			if(flashID != null)
+				PrintFlashInfo(rawFlashId);
+			return flashID;
+		}
+
+		protected byte[] ReadFlashId(bool isErrorExpected, out byte[] rawFlashId)
+		{
+			rawFlashId = null;
 			var flashID = ExecuteCommand(CMD_CUSTOM_FLASH_ID, null, 0.2f, 4, isErrorExpected: isErrorExpected);
 			if(flashID == null)
 				return null;
-			addLogLine($"Flash ID: 0x{flashID[0]:X2}{flashID[1]:X2}{flashID[2]:X2}");
+			rawFlashId = (byte[])flashID.Clone();
 			if(flashID[2] > 0x31 && flashID[2] < 0x3C)
 				flashID[2] -= 0x20;
 			if(flashID[2] < 0x11 || flashID[2] > 0x1C)
+			{
+				addLogLine($"Flash ID: 0x{rawFlashId[0]:X2}{rawFlashId[1]:X2}{rawFlashId[2]:X2}");
 				throw new Exception("Flash ID incorrect!");
+			}
 			flashSizeMB = (1 << (flashID[2] - 0x11)) / 8;
-			addLogLine($"Flash size is {flashSizeMB}MB");
 			return flashID;
+		}
+
+		protected void PrintFlashInfo(byte[] flashID)
+		{
+			int jedecId = flashID[0] | flashID[1] << 8 | flashID[2] << 16;
+			SPIFlashInfo flashInfo = SPIFlashInfoList.Singleton.findFlashForMID(jedecId);
+			if(flashInfo != null)
+				addSuccess(FormatFlashInfo(jedecId, flashInfo.manufacturer, (long)(flashSizeMB * 1024 * 1024), flashInfo.icName) + Environment.NewLine);
+			else
+				addSuccess(FormatFlashInfo(jedecId, "unknown", (long)(flashSizeMB * 1024 * 1024)) + Environment.NewLine);
 		}
 
 		protected virtual bool CheckHash(int addr, int len, byte[] data)
@@ -670,8 +793,7 @@ namespace BK7231Flasher
 				logger.setState("SHA mismatch!", Color.Red);
 				return false;
 			}
-			addSuccess($"Hash matches {expectedHash}!" + Environment.NewLine);
-			logger.addLog($"Hash took {sw.ElapsedMilliseconds} ms" + Environment.NewLine, Color.Gray);
+			addSuccess("SHA-256 verification passed." + Environment.NewLine);
 			return true;
 		}
 
@@ -705,8 +827,7 @@ namespace BK7231Flasher
 				addErrorLine($"CRC mismatch!\r\ndevice:\t{formatHex(crc)}\r\nflasher:\t{formatHex(calc)}");
 				return false;
 			}
-			addSuccess($"CRC matches {formatHex(calc)}!" + Environment.NewLine);
-			logger.addLog($"CRC took {sw.ElapsedMilliseconds} ms" + Environment.NewLine, Color.Gray);
+			addSuccess("CRC32 verification passed." + Environment.NewLine);
 			return true;
 		}
 
@@ -743,6 +864,7 @@ namespace BK7231Flasher
 			{
 				var data = GetChipInfo();
 				action?.Invoke(data);
+				addSuccess($"Device identified: {chipType}." + Environment.NewLine);
 				return true;
 			}
 			catch(Exception e)

@@ -62,7 +62,7 @@ namespace BK7231Flasher
             Console.WriteLine($"Read result saved to: {fullPath}");
             if (!string.IsNullOrEmpty(lastEncryptionKey))
             {
-                Console.WriteLine($"Encryption key: {lastEncryptionKey}");
+				Console.WriteLine("Encryption key acquired.");
             }
         }
 

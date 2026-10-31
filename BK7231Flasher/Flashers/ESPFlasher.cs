@@ -97,16 +97,18 @@ namespace BK7231Flasher
         }
 
         MemoryStream ms;
+		bool readFailed;
 
         public override byte[] getReadResult()
         {
-            if (ms == null)
+			if (readFailed || ms == null)
                 return null;
             return ms.ToArray();
         }
 
         bool saveReadResult(string fileName)
         {
+			if (readFailed) return false;
             if (ms == null)
             {
                 addError("There was no result to save." + Environment.NewLine);
@@ -115,8 +117,9 @@ namespace BK7231Flasher
             byte[] dat = ms.ToArray();
             string fullPath = "backups/" + fileName;
             File.WriteAllBytes(fullPath, dat);
-            addSuccess("Wrote " + dat.Length + " to " + fileName + Environment.NewLine);
+			addLogLine("Saved: " + dat.Length + " bytes to " + fullPath + ".");
             logger.onReadResultQIOSaved(dat, null, fullPath);
+			addSuccess("Read complete." + Environment.NewLine);
             return true;
         }
 
@@ -190,6 +193,7 @@ namespace BK7231Flasher
             for (int i = 0; i < 20; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+				SetOperationProgress($"Synchronizing: attempt {i + 1}...", Color.Black);
                 try
                 {
                     // send sync
@@ -208,6 +212,8 @@ namespace BK7231Flasher
                             }
                             catch { }
                         }
+						FinishOperationProgress();
+						addSuccess($"Synchronized on attempt {i + 1}." + Environment.NewLine);
                         return true;
                     }
                 }
@@ -216,8 +222,9 @@ namespace BK7231Flasher
                     // ignore timeout
                 }
                 Thread.Sleep(50);
-                addLog(".");
             }
+			FinishOperationProgress();
+			addErrorLine("Synchronization failed after 20 attempts.");
             return false;
         }
 
@@ -226,7 +233,7 @@ namespace BK7231Flasher
             // Try GET_SECURITY_INFO first (ESP32-C3 and later)
             try
             {
-                addLogLine("Trying GET_SECURITY_INFO...");
+				Debug.WriteLine("Trying GET_SECURITY_INFO...");
                 sendCommand(ESPCommand.GET_SECURITY_INFO, new byte[0]);
                 var resp = readPacket(1000, ESPCommand.GET_SECURITY_INFO);
                 if(resp != null && resp.Length >= 20) 
@@ -237,30 +244,30 @@ namespace BK7231Flasher
                      string chipName = "Unknown";
                      if(ChipIDs.ContainsKey(chipId)) chipName = ChipIDs[chipId];
                      
-                     addLogLine($"Got Chip ID from Security Info: {chipId} ({chipName})");
+					Debug.WriteLine($"Got Chip ID from Security Info: {chipId} ({chipName})");
                      return chipId;
                 }
                 else if (resp != null) {
-                    addLogLine($"GET_SECURITY_INFO returned {resp.Length} bytes.");
+					Debug.WriteLine($"GET_SECURITY_INFO returned {resp.Length} bytes.");
                     if(resp.Length == 4)
-                         addLogLine($"Value: {BitConverter.ToUInt32(resp, 0):X}");
+						Debug.WriteLine($"Value: {BitConverter.ToUInt32(resp, 0):X}");
                 }
             }
             catch(Exception ex)
             {
-                addLogLine("GET_SECURITY_INFO failed: " + ex.Message);
+				Debug.WriteLine("GET_SECURITY_INFO failed: " + ex.Message);
             }
 
             // Fallback: Read Magic Register 0x40001000
             try 
             {
-                addLogLine("Trying ReadReg 0x40001000...");
+				Debug.WriteLine("Trying ReadReg 0x40001000...");
                 uint val = ReadReg(0x40001000);
                 string chipName = "Unknown";
                 if(ChipMagicValues.ContainsKey(val)) chipName = ChipMagicValues[val];
                 
-                addLogLine($"Read Magic Reg 0x40001000: {val:X} ({chipName})");
-                if (val == 0) addLogLine("Warning: Read 0, this might indicate read failure or unsupported register.");
+				Debug.WriteLine($"Read Magic Reg 0x40001000: {val:X} ({chipName})");
+				if (val == 0) addWarningLine("Read 0, this might indicate read failure or unsupported register.");
                 return val;
             }
             catch(Exception ex)
@@ -273,7 +280,7 @@ namespace BK7231Flasher
         public uint ReadReg(uint addr)
         {
             byte[] payload = BitConverter.GetBytes(addr); // Little Endian
-            addLogLine($"Reading Reg {addr:X}...");
+			Debug.WriteLine($"Reading Reg {addr:X}...");
             sendCommand(ESPCommand.READ_REG, payload);
             var resp = readPacket(3000, ESPCommand.READ_REG);
             
@@ -458,10 +465,10 @@ namespace BK7231Flasher
         {
             try
             {
-                addLogLine("Reading Flash ID...");
+
                 // CMD 0x9F (RDID), read 24 bits
                 uint fid = RunSpiFlashCmd(0x9F, 24);
-                addLogLine($"Flash ID: {fid:X}");
+
                 
                 // Decode size roughly
                 // 0x16 = 22 -> 4MB
@@ -469,7 +476,8 @@ namespace BK7231Flasher
                 if(sizeCode > 0 && sizeCode <= 31)
                 {
                     long size = 1L << (int)sizeCode;
-                    addLogLine($"Detected Flash Size: {size} bytes ({size/1024/1024}MB)");
+					SPIFlashInfo info = SPIFlashInfoList.Singleton.findFlashForMID((int)(fid & 0xFFFFFF));
+					addSuccess(FormatFlashInfo((int)(fid & 0xFFFFFF), info?.manufacturer ?? "unknown", size, info?.icName) + Environment.NewLine);
                 }
                 else
                 {
@@ -568,13 +576,13 @@ namespace BK7231Flasher
             }
 
             logger.setState("Uploading stub...", Color.LightBlue);
-            addLogLine("Uploading stub flasher...");
+			addLogLine("Loading stub...");
             try
             {
                 // Load chip-specific stub from embedded resource
                 string stubName = GetStubNameForSelectedChip();
                 string jsonContent = FLoaders.GetStringFromAssembly(stubName);
-                addLogLine($"Loaded stub: {stubName}");
+				Debug.WriteLine($"Loaded stub: {stubName}");
                 
                 // Simple JSON parsing for our known fields
                 string textB64 = ExtractJsonString(jsonContent, "text");
@@ -587,7 +595,7 @@ namespace BK7231Flasher
                 byte[] data = Convert.FromBase64String(dataB64);
 
                 int totalStubBytes = text.Length + data.Length;
-                addLogLine($"Stub text: {text.Length} bytes @0x{textStart:X}, data: {data.Length} bytes @0x{dataStart:X}, entry: 0x{entry:X}");
+				Debug.WriteLine($"Stub text: {text.Length} bytes @0x{textStart:X}, data: {data.Length} bytes @0x{dataStart:X}, entry: 0x{entry:X}");
 
                 int stubBytesSent = 0;
 
@@ -612,7 +620,7 @@ namespace BK7231Flasher
                     stubBytesSent += len;
                     logger.setProgress(stubBytesSent, totalStubBytes);
                 }
-                addLogLine($"Stub text uploaded ({blocks} blocks).");
+				Debug.WriteLine($"Stub text uploaded ({blocks} blocks).");
 
                 // Upload data (DRAM)
                 logger.setState("Uploading stub data...", Color.LightBlue);
@@ -635,15 +643,15 @@ namespace BK7231Flasher
                     stubBytesSent += len;
                     logger.setProgress(stubBytesSent, totalStubBytes);
                 }
-                addLogLine($"Stub data uploaded ({blocks} blocks).");
+				Debug.WriteLine($"Stub data uploaded ({blocks} blocks).");
 
                 // Execute stub
                 logger.setState("Starting stub...", Color.LightBlue);
-                addLogLine("Running stub entry point...");
+				Debug.WriteLine("Running stub entry point...");
                 MemEnd(entry);
 
                 // Wait for OHAI
-                addLogLine("Waiting for stub handshake (OHAI)...");
+				Debug.WriteLine("Waiting for stub handshake (OHAI)...");
                 if (!CheckForOHAI(5000))
                 {
                     addErrorLine("Stub did not respond with OHAI.");
@@ -773,6 +781,8 @@ namespace BK7231Flasher
             }
             
             // After data, read MD5 (16 bytes)
+			FinishOperationProgress();
+			addLogLine("Verification: target and host MD5.");
             byte[] digest = readRawPacket(3000);
             if(digest == null || digest.Length != 16) throw new Exception("Failed to read MD5 digest");
             
@@ -788,7 +798,7 @@ namespace BK7231Flasher
                 }
             }
             
-            addLogLine("Flash Read MD5 verified.");
+			addSuccess("MD5 verification passed." + Environment.NewLine);
             return dataBytes;
         }
 
@@ -916,13 +926,13 @@ namespace BK7231Flasher
                  // esptool: resp_data_len = 16 for stub, 32 for ROM
                  // Stub returns 16 raw MD5 bytes, ROM returns 32 hex chars
                  int rdl = isStub ? 16 : 32;
-                 addLogLine($"Requesting MD5 for 0x{addr:X}-0x{addr + size:X} ({size} bytes), timeout={timeout}ms, resp_data_len={rdl}...");
+				Debug.WriteLine($"Requesting MD5 for 0x{addr:X}-0x{addr + size:X} ({size} bytes), timeout={timeout}ms, resp_data_len={rdl}...");
                  
                  sendCommand(ESPCommand.SPI_FLASH_MD5, payload.ToArray());
                  var resp = readPacket(timeout, ESPCommand.SPI_FLASH_MD5, rdl);
                  if(resp != null)
                  {
-                      addLogLine($"MD5 response: {resp.Length} bytes");
+					Debug.WriteLine($"MD5 response: {resp.Length} bytes");
                       if (isStub)
                       {
                           // Stub: resp is 16 raw bytes, convert to hex string
@@ -983,13 +993,13 @@ namespace BK7231Flasher
                 UploadStub();
                 if (isStub)
                 {
-                    addLogLine("Re-attaching SPI after stub...");
+					Debug.WriteLine("Re-attaching SPI after stub...");
                     SpiAttach();
                     if (baudrate > 115200)
                     {
-                        addLogLine($"Changing baud rate to {baudrate}...");
+						Debug.WriteLine($"Changing baud rate to {baudrate}...");
                         ChangeBaudrate(baudrate);
-                        addLogLine($"Baud rate changed to {baudrate}.");
+						Debug.WriteLine($"Baud rate changed to {baudrate}.");
                     }
                 }
             }
@@ -1101,7 +1111,8 @@ namespace BK7231Flasher
         public bool Connect()
         {
             logger.setState("Connecting to ESP...", Color.Yellow);
-            addLogLine("Attempting to connect to ESP...");
+			addLogLine($"Connecting to {serialName}...");
+			addLogLine($"Boot communication uses 115200 baud; requested flash transfer baud is {baudrate}.");
             if(!openPort())
             {
                 return false;
@@ -1168,11 +1179,13 @@ namespace BK7231Flasher
                         addErrorLine("==========================================================");
                     }
                     else if (autoName != null)
-                        addLogLine($"Auto-detect confirmed: {autoName}");
+						Debug.WriteLine($"Auto-detect confirmed: {autoName}");
+					else
+						addWarningLine($"Chip identification value 0x{chipMagic.Value:X8} is not recognized; continuing with selected {detectedChip}.");
                 }
 
                 logger.setState($"{detectedChip} synced", Color.LightGreen);
-                addSuccess(Environment.NewLine + $"Synced with {detectedChip}!" + Environment.NewLine);
+				addSuccess($"Device identified: {detectedChip}." + Environment.NewLine);
 
                 if (!SpiAttach())
                 {
@@ -1189,13 +1202,13 @@ namespace BK7231Flasher
         {
              try
              {
-                 addLogLine("Configuring SPI flash pins (SpiAttach)...");
+				Debug.WriteLine("Configuring SPI flash pins (SpiAttach)...");
 
                  if (bIsESP8266 && !isStub)
                  {
                      // ESP8266 ROM has no SPI_ATTACH command.
                      // Use FLASH_BEGIN(size=0, offset=0) which initializes SPI as a side effect.
-                     addLogLine("ESP8266 ROM: using FLASH_BEGIN to init SPI...");
+					Debug.WriteLine("ESP8266 ROM: using FLASH_BEGIN to init SPI...");
                      List<byte> fbPayload = new List<byte>();
                      fbPayload.AddRange(BitConverter.GetBytes((uint)0)); // size
                      fbPayload.AddRange(BitConverter.GetBytes((uint)0)); // blocks
@@ -1208,7 +1221,7 @@ namespace BK7231Flasher
                          addErrorLine("FLASH_BEGIN (SPI init) failed.");
                          return false;
                      }
-                     addLogLine("SPI initialized via FLASH_BEGIN.");
+					Debug.WriteLine("SPI initialized via FLASH_BEGIN.");
                      return true;
                  }
 
@@ -1222,7 +1235,7 @@ namespace BK7231Flasher
                      addErrorLine("SPI_ATTACH failed (no response or error status).");
                      return false;
                  }
-                 addLogLine("SPI_ATTACH success.");
+				Debug.WriteLine("SPI_ATTACH success.");
                  return true;
              }
              catch(Exception ex)
@@ -1236,7 +1249,7 @@ namespace BK7231Flasher
         {
              try
              {
-                 addLogLine($"Setting SPI flash parameters for {size / 1024 / 1024}MB...");
+				Debug.WriteLine($"Setting SPI flash parameters for {size / 1024 / 1024}MB...");
                  List<byte> payload = new List<byte>();
                  payload.AddRange(BitConverter.GetBytes((uint)0)); // id
                  payload.AddRange(BitConverter.GetBytes(size));    // total size
@@ -1252,7 +1265,7 @@ namespace BK7231Flasher
                      addErrorLine("SPI_SET_PARAMS failed (no response)");
                      return false;
                  }
-                 addLogLine("SPI_SET_PARAMS success");
+				Debug.WriteLine("SPI_SET_PARAMS success");
                  return true;
              }
              catch (Exception ex)
@@ -1266,7 +1279,7 @@ namespace BK7231Flasher
         {
             try
             {
-                addLogLine($"Requesting baud rate change to {newBaud}...");
+				Debug.WriteLine($"Requesting baud rate change to {newBaud}...");
                 byte[] payload = new byte[8];
                 // new baud
                 Array.Copy(BitConverter.GetBytes(newBaud), 0, payload, 0, 4);
@@ -1289,7 +1302,7 @@ namespace BK7231Flasher
                 serial.BaudRate = newBaud;
                 Thread.Sleep(50); // Give the local OS/Driver time to settle
                 serial.DiscardInBuffer();
-                addLogLine($"Baud rate changed to {newBaud} successfully.");
+				addLogLine($"Transfer baud: {newBaud} baud.");
                 return true;
             }
             catch (Exception ex)
@@ -1462,6 +1475,12 @@ namespace BK7231Flasher
 
         public override void doRead(int startSector = 0x000, int sectors = 10, bool fullRead = false)
         {
+			readFailed = true;
+			ms?.Dispose();
+			ms = null;
+			int lastPercent = -1;
+			try
+			{
             if (Connect())
             {
                 // GetChipId already called in Connect()
@@ -1484,7 +1503,7 @@ namespace BK7231Flasher
                 }
 
                 logger.setState("Reading flash...", Color.LightBlue);
-                addLogLine($"Starting Flash Read: {sectors} sectors from 0x{startSector:X}...");
+
                 ms = new MemoryStream();
                 var swRead = Stopwatch.StartNew();
                 uint startAddr = (uint)startSector * 0x1000;
@@ -1494,34 +1513,42 @@ namespace BK7231Flasher
                 if (!LegacyMode && UploadStub())
                 {
                     // Re-attach SPI after stub starts
-                    addLogLine("Re-attaching SPI after stub...");
+					Debug.WriteLine("Re-attaching SPI after stub...");
                     SpiAttach();
                     if (baudrate > 115200)
                     {
-                        addLogLine($"Changing baud rate to {baudrate}...");
+						Debug.WriteLine($"Changing baud rate to {baudrate}...");
                         ChangeBaudrate(baudrate);
-                        addLogLine($"Baud rate changed to {baudrate}.");
+						Debug.WriteLine($"Baud rate changed to {baudrate}.");
                     }
                     logger.setState($"Reading flash...", Color.LightBlue);
 
+					addLogLine($"Read range: 0x{startAddr:X6}-0x{startAddr + totalSize - 1:X6} ({totalSize} bytes), at {serial.BaudRate} baud.");
                     try
                     {
                         byte[] flashData = ReadFlashFast(startAddr, totalSize, (received, total) =>
                         {
                             logger.setProgress(received, total);
+							int percent = (int)((long)received * 100 / total);
+							if (percent != lastPercent)
+							{
+								SetOperationProgress($"Reading: ({percent,3}%) 0x{startAddr + received:X6}", Color.Black);
+								lastPercent = percent;
+							}
                         });
                         ms.Write(flashData, 0, flashData.Length);
                         swRead.Stop();
                         double secsFast = swRead.Elapsed.TotalSeconds;
                         double kbitsFast = (totalSize * 8.0 / 1000.0) / secsFast;
                         double kbytesFast = (totalSize / 1024.0) / secsFast;
-                        addLogLine($"Read {totalSize} bytes at 0x{startAddr:X8} in {secsFast:F1}s ({kbitsFast:F1} kbit/s, {kbytesFast:F1} KB/s)");
-                        addLogLine("Flash Read Complete (stub mode).");
-                        logger.setState("Read complete", Color.LightGreen);
+						readFailed = false;
                         return;
                     }
                     catch (Exception ex)
                     {
+						FinishOperationProgress();
+						if (cancellationToken.IsCancellationRequested || isCancelled) return;
+						if (HandleSerialConnectionLost(ex)) return;
                         logger.setState("Read error", Color.Red);
                         addErrorLine("Fast read failed: " + ex.Message);
                         addLogLine("Falling back to slow read...");
@@ -1531,6 +1558,8 @@ namespace BK7231Flasher
                 // Slow read fallback (ROM only, 64 bytes at a time)
                 uint blockSize = 64; // Max safe size for ROM READ_FLASH_SLOW
 
+				addLogLine($"Read range: 0x{startAddr:X6}-0x{startAddr + totalSize - 1:X6} ({totalSize} bytes), at {serial.BaudRate} baud.");
+				lastPercent = -1;
                 uint currentAddr = startAddr;
                 while (currentAddr < startAddr + totalSize)
                 {
@@ -1558,15 +1587,32 @@ namespace BK7231Flasher
                     ms.Write(block, 0, block.Length);
                     currentAddr += (uint)block.Length;
                     logger.setProgress((int)(currentAddr - startAddr), (int)totalSize);
+					int percent = (int)((long)(currentAddr - startAddr) * 100 / totalSize);
+					if (percent != lastPercent)
+					{
+						SetOperationProgress($"Reading: ({percent,3}%) 0x{currentAddr:X6}", Color.Black);
+						lastPercent = percent;
+					}
                 }
                 swRead.Stop();
                 double secsSlow = swRead.Elapsed.TotalSeconds;
                 double kbitsSlow = (totalSize * 8.0 / 1000.0) / secsSlow;
                 double kbytesSlow = (totalSize / 1024.0) / secsSlow;
-                addLogLine($"Read {totalSize} bytes at 0x{startAddr:X8} in {secsSlow:F1}s ({kbitsSlow:F1} kbit/s, {kbytesSlow:F1} KB/s)");
-                addLogLine("Flash Read Complete.");
-                logger.setState("Read complete", Color.LightGreen);
+				FinishOperationProgress();
+				readFailed = ms.Length != totalSize;
+				if (!readFailed)
+					addLogLine("Verification: independent full-range verification is unavailable in ROM slow-read mode.");
             }
+			}
+			catch (Exception ex)
+			{
+				if (!cancellationToken.IsCancellationRequested && !isCancelled)
+					LogOperationException("Read failed: ", ex);
+			}
+			finally
+			{
+				FinishOperationProgress();
+			}
         }
 
         public override void doReadAndWrite(int startSector, int sectors, string sourceFileName, WriteMode rwMode)
@@ -1593,13 +1639,13 @@ namespace BK7231Flasher
                     UploadStub();
                     if (isStub)
                     {
-                        addLogLine("Re-attaching SPI after stub...");
+						Debug.WriteLine("Re-attaching SPI after stub...");
                         SpiAttach();
                         if (baudrate > 115200)
                         {
-                            addLogLine($"Changing baud rate to {baudrate}...");
+							Debug.WriteLine($"Changing baud rate to {baudrate}...");
                             ChangeBaudrate(baudrate);
-                            addLogLine($"Baud rate changed to {baudrate}.");
+							Debug.WriteLine($"Baud rate changed to {baudrate}.");
                         }
                     }
                 }
@@ -1608,8 +1654,9 @@ namespace BK7231Flasher
                 uint numBlocks = (uint)((data.Length + blockSize - 1) / blockSize);
 
                 logger.setState("Erasing flash...", Color.LightBlue);
-                addLogLine($"Starting Flash Write: {data.Length} bytes ({numBlocks} blocks) at 0x{offset:X}...");
-                addLogLine("Sending FLASH_BEGIN (may erase, this can take a while)...");
+				addLogLine($"Write range: 0x{offset:X6}-0x{offset + data.Length - 1:X6} ({data.Length} bytes), at {serial.BaudRate} baud.");
+				int lastPercent = -1;
+				addLogLine("Preparing flash write; erase may take a while...");
                 var swWrite = Stopwatch.StartNew();
 
                 // FLASH_BEGIN: size, numBlocks, blockSize, offset
@@ -1626,7 +1673,7 @@ namespace BK7231Flasher
                     addErrorLine("FLASH_BEGIN failed (erase timeout or error).");
                     return;
                 }
-                addLogLine("FLASH_BEGIN OK, erase complete.");
+				Debug.WriteLine("FLASH_BEGIN OK, erase complete.");
                 logger.setState("Writing flash...", Color.LightBlue);
 
                 for (uint i = 0; i < numBlocks; i++)
@@ -1671,21 +1718,27 @@ namespace BK7231Flasher
                     }
 
                     logger.setProgress((int)((i + 1) * blockSize), data.Length);
+					int completed = Math.Min((int)((i + 1) * blockSize), data.Length);
+					int percent = (int)((long)completed * 100 / data.Length);
+					if (percent != lastPercent)
+					{
+						SetOperationProgress($"Writing: ({percent,3}%) 0x{offset + completed:X6}", Color.Black);
+						lastPercent = percent;
+					}
                 }
 
                 swWrite.Stop();
                 double secsWrite = swWrite.Elapsed.TotalSeconds;
                 double kbitsWrite = (data.Length * 8.0 / 1000.0) / secsWrite;
                 double kbytesWrite = (data.Length / 1024.0) / secsWrite;
-                addLogLine($"Wrote {data.Length} bytes at 0x{offset:X8} in {secsWrite:F1}s ({kbitsWrite:F1} kbit/s, {kbytesWrite:F1} KB/s)");
-                addSuccess("Flash Write Complete!" + Environment.NewLine);
-                logger.setState("Write complete", Color.LightGreen);
+				FinishOperationProgress();
+				bool verificationPassed = !isStub;
 
                 // Verify with MD5 BEFORE sending FLASH_END (stub must still be running)
                 if (isStub)
                 {
                      logger.setState("Verifying MD5...", Color.LightBlue);
-                     addLogLine("Verifying write with MD5...");
+					addLogLine("Verification: target and host MD5.");
                      try
                      {
                          using(var md5 = MD5.Create())
@@ -1696,7 +1749,7 @@ namespace BK7231Flasher
                              string actual = FlashMd5Sum(offset, (uint)data.Length);
                              if(actual == null) addErrorLine("Failed to get Flash MD5");
                              else if(actual != expected) addErrorLine($"MD5 Mismatch! Expected {expected}, Got {actual}");
-                             else { addSuccess("Write Verified Successfully!" + Environment.NewLine); logger.setState("Write verified", Color.LightGreen); }
+							 else { verificationPassed = true; addSuccess("MD5 verification passed." + Environment.NewLine); logger.setState("Write verified", Color.LightGreen); }
                          }
                      }
                      catch(Exception ex)
@@ -1707,13 +1760,18 @@ namespace BK7231Flasher
 
                 // FLASH_END: no_entry=1 means stay in bootloader (don't reboot)
                 // esptool: struct.pack("<I", int(not reboot)) where reboot=False sends 1
-                addLogLine("Sending FLASH_END...");
+				Debug.WriteLine("Sending FLASH_END...");
                 sendCommand(ESPCommand.FLASH_END, BitConverter.GetBytes((uint)1));
                 var endResp = readPacket(1000, ESPCommand.FLASH_END);
                 if (endResp == null)
                     addWarningLine("FLASH_END: no response (non-fatal).");
                 else
-                    addLogLine("FLASH_END OK.");
+					Debug.WriteLine("FLASH_END OK.");
+				if (verificationPassed)
+				{
+					logger.setState("Write complete", Color.LightGreen);
+					addSuccess("Write complete." + Environment.NewLine);
+				}
             }
         }
     }

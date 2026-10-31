@@ -20,9 +20,7 @@ namespace BK7231Flasher
 
 		protected override bool doGenericSetup()
 		{
-			addLog("Now is: " + DateTime.Now.ToLongDateString() + " " + DateTime.Now.ToLongTimeString() + "." + Environment.NewLine);
-			addLog("Flasher mode: " + chipType + Environment.NewLine);
-			addLog("Going to open port: " + serialName + "." + Environment.NewLine);
+			addLogLine($"Connecting: {serialName}, {chipType}, requested transfer {baudrate} baud.");
 			try
 			{
 				cancellationToken.ThrowIfCancellationRequested();
@@ -35,10 +33,9 @@ namespace BK7231Flasher
 			}
 			catch(Exception ex)
 			{
-				addLog("Port setup failed with " + ex.Message + "!" + Environment.NewLine);
+				addErrorLine("Port setup failed: " + ex.Message.TrimEnd('\r', '\n'));
 				return false;
 			}
-			addLog("Port ready!" + Environment.NewLine);
 			return true;
 		}
 
@@ -59,7 +56,7 @@ namespace BK7231Flasher
 				int addr = 0x100001;
 				while(attempts++ < 500)
 				{
-					addLog($"Sync attempt {attempts}/500 ");
+					SetOperationProgress($"Synchronizing: attempt {attempts}...", Color.Black);
 					int tries = 50;
 					serial.ReadTimeout = 50;
 					serial.DiscardInBuffer();
@@ -76,7 +73,8 @@ namespace BK7231Flasher
 						catch { }
 						if(t.Contains("Boot >"))
 						{
-							logger.addLog("... OK!" + Environment.NewLine, Color.Green);
+							FinishOperationProgress();
+							addSuccess("Synchronized." + Environment.NewLine);
 							var ramcode = FLoaders.GetBinaryFromAssembly("RDA5981_Stub");
 							addLogLine("Uploading stub...");
 							serial.Write($"loadb 00100000 {ramcode.Length:X}\r");
@@ -124,7 +122,6 @@ namespace BK7231Flasher
 							}
 						}
 					}
-					addWarningLine("... failed, will retry!");
 				}
 			}
 			return false;

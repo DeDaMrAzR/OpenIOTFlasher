@@ -241,6 +241,7 @@ namespace BK7231Flasher
         /// If the Sender has not responded to repeated NAK nagging after this number of attempts, then the Receiver should abort the transfer.
         /// </summary>
         public int ReceiverMaxConsecutiveRetries = 10;
+		public int? ReceiverWriteTimeoutMillisec;
 
         private int _NumCancellationBytesRequired = 1;
         /// This is the minimum number of cancellation bytes that a Sender or Receiver must receive in order to cancel the file transfer.
@@ -389,6 +390,11 @@ namespace BK7231Flasher
         /// </summary>
         public void CancelFileTransfer()
         {
+			if(receiverSessionActive)
+			{
+				CancelReceive(Interlocked.Read(ref receiverGeneration));
+				return;
+			}
 			if (WorkerOwnedSenderCleanup && !ownedSenderActive && CurrentState == States.Inactive)
 				return;
 			if (ownedSenderActive)
@@ -523,6 +529,69 @@ namespace BK7231Flasher
         /// Performs blocking when the Receive() method is called by the user.
         /// </summary>
         private readonly ManualResetEvent ReceiverUserBlock = new ManualResetEvent(false);
+		volatile bool receiverSessionActive;
+		internal bool IsReceiving => receiverSessionActive;
+		bool receiverCallbacksActive;
+		volatile bool receiverCancellationRequested;
+		long receiverGeneration;
+		Exception receiverCallbackFailure;
+		SerialDataReceivedEventHandler receiverHandler;
+
+		void CancelReceive(long generation)
+		{
+			if(!receiverSessionActive || generation != Interlocked.Read(ref receiverGeneration))
+				return;
+			receiverCancellationRequested = true;
+			ReceiverUserBlock.Set();
+		}
+
+		void RunReceiverCallback(long generation, Action callback)
+		{
+			lock(ReceiverStateLock)
+			{
+				if(!receiverCallbacksActive || generation != receiverGeneration)
+					return;
+				try
+				{
+					callback();
+					if(CurrentState == States.Inactive)
+						receiverCallbacksActive = false;
+				}
+				catch(Exception exception)
+				{
+					receiverCallbackFailure ??= exception;
+					StopReceiver(generation);
+				}
+			}
+		}
+
+		Exception StopReceiver(long generation)
+		{
+			if(generation != receiverGeneration)
+				return null;
+			receiverCallbacksActive = false;
+			CurrentState = States.Inactive;
+			Aborted = true;
+			Exception failure = null;
+			try { ReceiverNAKWatchdog?.Dispose(); }
+			catch(Exception exception) { failure = exception; }
+			finally { ReceiverNAKWatchdog = null; }
+			try { ReceiverFileInitiationTimer?.Dispose(); }
+			catch(Exception exception) { failure ??= exception; }
+			finally { ReceiverFileInitiationTimer = null; }
+			try
+			{
+				if(receiverHandler != null && Port != null)
+					Port.DataReceived -= receiverHandler;
+			}
+			catch(Exception exception) { failure ??= exception; }
+			finally
+			{
+				receiverHandler = null;
+				ReceiverUserBlock.Set();
+			}
+			return failure;
+		}
 
         private int _NumCancellationBytesReceived = 0;
         /// <summary>
@@ -559,64 +628,153 @@ namespace BK7231Flasher
         /// A TerminationReasonEnum that describes under what conditions the receive process has terminated. This may
         /// be due to a successful EndOfFile being reached, or due to timeouts, errors, etc.
         /// </returns>
-        public TerminationReasonEnum Receive(MemoryStream allDataReceivedBuffer = null)
-        {
-            // Initialize control variables
-            _TerminationReason = TerminationReasonEnum.TransferStillActiveNotTerminated;
-            Aborted = false;
-            BlockNumExpected = 1;
-            _NumFileInitiationBytesSent = 0;
-            _NumCancellationBytesReceived = 0;
-            Remainder = new byte[0];
-            DataPacketNumBytesStored = 0;
-            ExpectingFirstPacket = true;
-            ValidPacketReceived = false;
-			ReceiverAcceptedPacketCount = 0;
-			ReceiverAwaitingRetransmission = false;
-            YModemFileSize = -1;
-            YModemBytesReceived = 0;
-            YModemReceivedFileName = null;
+		public TerminationReasonEnum Receive(MemoryStream allDataReceivedBuffer = null,
+			CancellationToken cancellationToken = default(CancellationToken))
+		{
+			InProgress.Wait(cancellationToken);
+			long generation = 0;
+			bool failed = false;
+			int? previousWriteTimeout = null;
+			CancellationTokenRegistration cancellationRegistration = default(CancellationTokenRegistration);
+			try
+			{
+				lock(ReceiverStateLock)
+				{
+					generation = Interlocked.Increment(ref receiverGeneration);
+					receiverSessionActive = true;
+					receiverCallbacksActive = true;
+					receiverCancellationRequested = false;
+					receiverCallbackFailure = null;
+					ReceiverUserBlock.Reset();
+					cancellationRegistration = cancellationToken.Register(() => CancelReceive(generation));
+					cancellationToken.ThrowIfCancellationRequested();
+					if(ReceiverWriteTimeoutMillisec.HasValue)
+					{
+						previousWriteTimeout = Port.WriteTimeout;
+						Port.WriteTimeout = ReceiverWriteTimeoutMillisec.Value;
+					}
+					// Initialize control variables
+					_TerminationReason = TerminationReasonEnum.TransferStillActiveNotTerminated;
+					Aborted = false;
+					BlockNumExpected = 1;
+					_NumFileInitiationBytesSent = 0;
+					_NumCancellationBytesReceived = 0;
+					Remainder = new byte[0];
+					DataPacketNumBytesStored = 0;
+					ExpectingFirstPacket = true;
+					ValidPacketReceived = false;
+					ReceiverAcceptedPacketCount = 0;
+					ReceiverAwaitingRetransmission = false;
+					YModemFileSize = -1;
+					YModemBytesReceived = 0;
+					YModemReceivedFileName = null;
 
-            // Define file initiation byte according to variant
-            if (_Variant == Variants.XModemChecksum || _Variant == Variants.XModem1KChecksum)
-                FileInitiationByteToSend = NAK;
-            else
-                FileInitiationByteToSend = C;
+					// Define file initiation byte according to variant
+					if (_Variant == Variants.XModemChecksum || _Variant == Variants.XModem1KChecksum)
+						FileInitiationByteToSend = NAK;
+					else
+						FileInitiationByteToSend = C;
 
-            // Initialize state
-            CurrentState = States.ReceiverFileInitiation;
+					// Initialize state
+					CurrentState = States.ReceiverFileInitiation;
 
-            // Open port if it isn't open already
-            if (Port.IsOpen == false)
-                Port.Open();
+					// Open port if it isn't open already
+					if (Port.IsOpen == false)
+						Port.Open();
 
-            // Clear out serial port buffers
-            Port.DiscardInBuffer();
-            Port.DiscardOutBuffer();
+					// Clear out serial port buffers
+					Port.DiscardInBuffer();
+					Port.DiscardOutBuffer();
 
-            // If user wants to get all data in one big lump, initialize the buffer with whatever MemoryStream object
-            // is passed. If a memorystream is omitted, this defaults to null, which means received data
-            // will not be stored.
-            AllDataReceivedBuffer = allDataReceivedBuffer;
+					// If user wants to get all data in one big lump, initialize the buffer with whatever MemoryStream object
+					// is passed. If a memorystream is omitted, this defaults to null, which means received data
+					// will not be stored.
+					AllDataReceivedBuffer = allDataReceivedBuffer;
 
-            // Attach event handler
-            Port.DataReceived += new SerialDataReceivedEventHandler(Port_DataReceived);
 
-            InProgress.Wait();
+					// Attach event handler
+					receiverHandler = (sender, args) => RunReceiverCallback(generation, () => ProcessReceivedData(sender));
+					Port.DataReceived += receiverHandler;
 
-            // Begin file initiation
-            if (ReceiverFileInitiationTimer == null)
-                ReceiverFileInitiationTimer = new Timer(ReceiverFileInitiationRoutine, null, 0, ReceiverFileInitiationRetryMillisec);
-            else
-                ReceiverFileInitiationTimer.Change(0, ReceiverFileInitiationRetryMillisec);
+					// Begin file initiation
+					if(ReceiverFileInitiationTimer == null)
+						ReceiverFileInitiationTimer = new Timer(state => RunReceiverCallback((long)state,
+							() => ReceiverFileInitiationRoutine(null)), generation, 0, ReceiverFileInitiationRetryMillisec);
+					else
+						ReceiverFileInitiationTimer.Change(0, ReceiverFileInitiationRetryMillisec);
+				}
 
-            // Block here
-            ReceiverUserBlock.Reset();
-            ReceiverUserBlock.WaitOne();
-            ReceiverUserBlock.Reset();
-            InProgress.Release();
-            return TerminationReason;
-        }
+				// Block here
+				var progressWatch = System.Diagnostics.Stopwatch.StartNew();
+				int acceptedPackets = 0;
+				bool progressStarted = false;
+				while(!ReceiverUserBlock.WaitOne(Math.Max(1, Math.Min(ReceiverTimeoutMillisec, 1000))))
+				{
+					lock(ReceiverStateLock)
+					{
+						if(!receiverCallbacksActive)
+							break;
+						if(CurrentState == States.ReceiverFileInitiation)
+							continue;
+						if(!progressStarted || acceptedPackets != ReceiverAcceptedPacketCount)
+						{
+							progressStarted = true;
+							acceptedPackets = ReceiverAcceptedPacketCount;
+							progressWatch.Restart();
+						}
+						long packetWireMilliseconds = (long)(_Packet1024NominalSize + 5) * 10000 / Math.Max(1, Port.BaudRate);
+						long progressTimeout = Math.Max(ReceiverTimeoutMillisec, packetWireMilliseconds)
+							* Math.Max(1, ReceiverMaxConsecutiveRetries);
+						if(progressWatch.ElapsedMilliseconds >= progressTimeout)
+						{
+							receiverCallbackFailure = new TimeoutException($"No valid UART data packet received for {progressTimeout / 1000.0:F1} s; receive stopped.");
+							_TerminationReason = TerminationReasonEnum.TooManyRetries;
+							StopReceiver(generation);
+						}
+					}
+				}
+				lock(ReceiverStateLock)
+				{
+					if(receiverCancellationRequested && receiverCallbackFailure == null)
+					{
+						_TerminationReason = TerminationReasonEnum.UserCancelled;
+						try
+						{
+							AbortCore();
+							for(int k = 1; k <= _NumCancellationBytesToSend; k++)
+								Port.Write(new byte[] { CAN }, 0, 1);
+						}
+						catch(Exception exception) { receiverCallbackFailure = exception; }
+					}
+					if(receiverCallbackFailure != null)
+						System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(receiverCallbackFailure).Throw();
+					return TerminationReason;
+				}
+			}
+			catch { failed = true; throw; }
+			finally
+			{
+				Exception cleanupFailure = null;
+				try
+				{
+					lock(ReceiverStateLock)
+					{
+						cleanupFailure = StopReceiver(generation);
+						if(previousWriteTimeout.HasValue)
+						{
+							try { Port.WriteTimeout = previousWriteTimeout.Value; }
+							catch(Exception exception) { cleanupFailure ??= exception; }
+						}
+						receiverSessionActive = false;
+					}
+					try { cancellationRegistration.Dispose(); }
+					catch(Exception exception) { cleanupFailure ??= exception; }
+				}
+				finally { InProgress.Release(); }
+				if(cleanupFailure != null && !failed)
+					System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
+			}
+		}
 
         // The byte value that a Receiver sends when requesting file transfer:
         // XModem Checksum = <NAK>
@@ -709,7 +867,8 @@ namespace BK7231Flasher
 
                         // Start the timeout/NAK watchdog
                         if (ReceiverNAKWatchdog == null)
-                            ReceiverNAKWatchdog = new Timer(NAKNag, null, ReceiverTimeoutMillisec, ReceiverTimeoutMillisec);
+							ReceiverNAKWatchdog = new Timer(state => RunReceiverCallback((long)state, () => NAKNag(null)),
+							receiverGeneration, ReceiverTimeoutMillisec, ReceiverTimeoutMillisec);
                         else
                             ReceiverNAKWatchdog.Change(ReceiverTimeoutMillisec, ReceiverTimeoutMillisec);
 

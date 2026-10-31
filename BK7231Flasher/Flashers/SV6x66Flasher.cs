@@ -1555,7 +1555,7 @@ namespace BK7231Flasher
 				throw new IOException("Unsupported SV6x66 flash information/layout for JEDEC "
 					+ FormatHexBytes(flashId.Take(3).ToArray()));
 			addSuccess("Device identified: SV6x66." + Environment.NewLine);
-			addLogLine($"Detected flash: {flashInfo.manufacturer} {flashInfo.icName}, JEDEC ID {FormatHexBytes(flashId.Take(3).ToArray())}, {flashInfo.szMem / (1024 * 1024)} MiB.");
+			addSuccess(FormatFlashInfo(flashId[0] | flashId[1] << 8 | flashId[2] << 16, flashInfo.manufacturer, flashInfo.szMem, flashInfo.icName) + Environment.NewLine);
 			return flashInfo;
 		}
 

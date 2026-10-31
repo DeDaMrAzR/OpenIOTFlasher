@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading;
+using System.Drawing;
 
 namespace BK7231Flasher
 {
@@ -72,14 +73,15 @@ namespace BK7231Flasher
             const int maxAttempts = 10;
             for (int loop = 0; loop < maxAttempts && !isCancelled; loop++)
             {
-                addLogLine("CH341 Beken sync attempt " + loop);
+				SetOperationProgress($"Synchronizing: attempt {loop + 1}...", Color.Black);
                 bool bResetOk = ChipReset();
                 if(bResetOk)
                 {
                     bool bOk = BK_EnterSPIMode(0xD2);
                     if (bOk)
                     {
-                        addLogLine("CH341 Beken sync OK!");
+						FinishOperationProgress();
+						addSuccess("Synchronized." + Environment.NewLine);
                         return true;
                     }
                 }
@@ -89,6 +91,7 @@ namespace BK7231Flasher
                 }
                 Thread.Sleep(1000);
             }
+			FinishOperationProgress();
             if(isCancelled)
             {
                 addLogLine("CH341 Beken sync cancelled.");

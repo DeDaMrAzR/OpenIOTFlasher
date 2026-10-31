@@ -192,6 +192,7 @@ namespace BK7231Flasher
                 return true;
             }
 
+			FinishOperationProgress();
             serialConnectionLostLogged = true;
             logger?.setLogProgress("COM port disconnected" + Environment.NewLine, Color.Red);
             logger?.setState("COM port disconnected", Color.Red);
@@ -220,8 +221,25 @@ namespace BK7231Flasher
                 || text.IndexOf("semaphore timeout period has expired", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
+		bool operationProgressActive;
+
+		protected void SetOperationProgress(string text, Color color)
+		{
+			operationProgressActive = !string.IsNullOrEmpty(text) && !text.EndsWith("\n", StringComparison.Ordinal);
+			logger?.setLogProgress(text, color);
+		}
+
+		protected void FinishOperationProgress()
+		{
+			if(!operationProgressActive)
+				return;
+			operationProgressActive = false;
+			logger?.addLog(Environment.NewLine, Color.Black);
+		}
+
         private void WriteLog(string text, Color color)
         {
+			FinishOperationProgress();
             try
             {
                 if (serial != null && serial.IsOpen)
@@ -309,27 +327,23 @@ namespace BK7231Flasher
         {
             return "0x" + i.ToString("X2");
         }
-        protected static string FormatFlashInfo(int jedecId, string manufacturer, int sizeBytes)
-        {
-            string jedecBytes = string.Format("{0:X2}-{1:X2}-{2:X2}",
-                jedecId & 0xff, (jedecId >> 8) & 0xff, (jedecId >> 16) & 0xff);
-            string size;
-            if (sizeBytes > 0 && sizeBytes % (1024 * 1024) == 0)
-            {
-                size = (sizeBytes / (1024 * 1024)) + " MB";
-            }
-            else if (sizeBytes > 0 && sizeBytes % 1024 == 0)
-            {
-                size = (sizeBytes / 1024) + " KB";
-            }
-            else
-            {
-                size = sizeBytes + " bytes";
-            }
-            return "Flash info: JEDEC ID " + jedecBytes
-                + ", Manufacturer " + manufacturer
-                + ", size " + size + " (0x" + sizeBytes.ToString("X") + " bytes).";
-        }
+		protected static string FormatFlashInfo(int jedecId, string manufacturer, long sizeBytes, string model = null)
+		{
+			string jedecBytes = string.Format("{0:X2} {1:X2} {2:X2}",
+				jedecId & 0xff, (jedecId >> 8) & 0xff, (jedecId >> 16) & 0xff);
+			string size;
+			if(sizeBytes > 0 && sizeBytes % (1024 * 1024) == 0)
+				size = (sizeBytes / (1024 * 1024)) + " MiB";
+			else if(sizeBytes > 0 && sizeBytes % 1024 == 0)
+				size = (sizeBytes / 1024) + " KiB";
+			else
+				size = sizeBytes + " bytes";
+			string identity = string.IsNullOrEmpty(manufacturer) ? "unknown" : manufacturer;
+			if(!string.IsNullOrEmpty(model))
+				identity += " " + model;
+			return "Detected flash: " + identity + ", JEDEC ID " + jedecBytes
+				+ ", " + size + " (" + sizeBytes + " bytes).";
+		}
         public void setSkipKeyCheck(bool b)
         {
             bSkipKeyCheck = b;
@@ -397,12 +411,10 @@ namespace BK7231Flasher
 
         public virtual void Xm_PacketSent(int sentBytes, int total, int sequence, uint offset)
         {
-            if((sequence % 4) == 1)
-            {
-                addLog($"0x{offset:X}... ");
-            }
-
-            logger.setProgress(sentBytes, total);
+			if ((sequence % 4) == 1 || sentBytes >= total)
+				SetOperationProgress($"Transferring: {sentBytes}/{total} bytes", Color.Black);
+			logger.setProgress(sentBytes, total);
+			if (sentBytes >= total) FinishOperationProgress();
         }
 
         public virtual void Dispose() { }

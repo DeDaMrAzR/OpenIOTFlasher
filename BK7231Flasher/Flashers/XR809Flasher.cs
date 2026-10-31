@@ -418,13 +418,14 @@ namespace BK7231Flasher
 
             flashID = resp.Payload;
             addLogLine($"BROM version : {bromVersion}");
-            addLogLine($"Flash ID     : {flashID[0]:X2} {flashID[1]:X2} {flashID[2]:X2}");
 
             // JEDEC size byte: e.g. 0x15 → 1 << (0x15 - 0x11) = 16 Mbit = 2 MB
             if (flashID.Length >= 3 && flashID[2] >= 0x11 && flashID[2] <= 0x20)
             {
                 flashSizeBytes = (1 << (flashID[2] - 0x11)) * 0x20000;
-                addLogLine($"Flash size   : {flashSizeBytes / 0x100000} MB");
+				int jedecId = flashID[0] | flashID[1] << 8 | flashID[2] << 16;
+				SPIFlashInfo info = SPIFlashInfoList.Singleton.findFlashForMID(jedecId);
+				addSuccess(FormatFlashInfo(jedecId, info?.manufacturer ?? "unknown", flashSizeBytes, info?.icName) + Environment.NewLine);
             }
             else
             {

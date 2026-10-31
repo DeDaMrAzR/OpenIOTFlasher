@@ -9,6 +9,7 @@ namespace BK7231Flasher
     {
         protected CH341DEV hd;
         private bool ch341Opened;
+		bool readFailed;
 
 
 
@@ -16,10 +17,6 @@ namespace BK7231Flasher
         {
             byte[] cmd = new byte[4] { 0x9F, 0x00, 0x00, 0x00 };
             byte[] resp = hd.Ch341SPI4Stream(cmd);
-            if (resp != null)
-            {
-                addLogLine($"JEDEC ID: {BitConverter.ToString(resp)}");
-            }
             return resp;
         }
 
@@ -28,7 +25,6 @@ namespace BK7231Flasher
             if (jedec == null || jedec.Length < 4)
                 return 0;
             int size = 1 << jedec[3]; // common formula: 2^N bytes
-            addLogLine($"Detected flash size: {size / 1024} KB");
             return size;
         }
 
@@ -65,9 +61,10 @@ namespace BK7231Flasher
             const int pageSize = 256;
             byte[] result = new byte[size];
             byte[] cmd = new byte[4 + pageSize];
+			int lastPercent = -1;
             if (bSilent == false)
             {
-                addLogLine("Starting flash read, ofs 0x" + address.ToString("X") + ", len 0x" + size.ToString("X"));
+				addLogLine($"Read range: 0x{address:X6}-0x{address + size - 1:X6} ({size} bytes).");
 
                 logger.setProgress(0, size);
                 logger.setState("Reading", Color.White);
@@ -96,6 +93,17 @@ namespace BK7231Flasher
                     //}
                     //Console.Write($"0x{addr:X6}...");
                     Array.Copy(resp, 4, result, offset, readSize);
+					if (!bSilent)
+					{
+						int completed = offset + readSize;
+						int percent = (int)((long)completed * 100 / size);
+						if (percent != lastPercent)
+						{
+							SetOperationProgress($"Reading: ({percent,3}%) 0x{address + completed:X6}", Color.Black);
+							lastPercent = percent;
+						}
+						logger.setProgress(completed, size);
+					}
                 }
                 else
                 {
@@ -109,8 +117,7 @@ namespace BK7231Flasher
 
             if (bSilent == false)
             {
-                logger.setState("Reading done", Color.DarkGreen);
-                addLogLine($"Done!");
+				FinishOperationProgress();
             }
             return result;
         }
@@ -275,7 +282,8 @@ namespace BK7231Flasher
                 return false;
             }
             const int pageSize = 256;
-            addLogLine("Starting flash write, ofs 0x" + ofs.ToString("X") + ", len 0x" + len.ToString("X"));
+			addLogLine($"Write range: 0x{ofs:X6}-0x{ofs + len - 1:X6} ({len} bytes).");
+			int lastPercent = -1;
 
             logger.setProgress(0, len);
             logger.setState("Writing", Color.White);
@@ -285,6 +293,7 @@ namespace BK7231Flasher
                 logger.setProgress(offset, len);
                 if (!WriteEnable())
                 {
+					FinishOperationProgress();
                     return false;
                 }
 
@@ -301,6 +310,7 @@ namespace BK7231Flasher
                 hd.Ch341SPI4Stream(cmd);
                 if (!WaitWriteComplete(5000))
                 {
+					FinishOperationProgress();
                     return false;
                 }
                 if (loops % 50 == 0)
@@ -309,21 +319,31 @@ namespace BK7231Flasher
                     if (readBack == null)
                     {
                         logger.setState("Writing error", Color.Red);
-                        return false;
+						FinishOperationProgress();
+						return false;
                     }
                     for (int i = 0; i < writeSize; i++)
                     {
                         if (readBack[i] != buffer[offset + i])
                         {
                             logger.setState("Writing error", Color.Red);
-                            return false;
+							FinishOperationProgress();
+							return false;
                         }
                     }
                 }
                 loops++;
                 offset += writeSize;
+				logger.setProgress(offset, len);
+				int percent = (int)((long)offset * 100 / len);
+				if (percent != lastPercent)
+				{
+					SetOperationProgress($"Writing: ({percent,3}%) 0x{ofs + offset:X6}", Color.Black);
+					lastPercent = percent;
+				}
 
             }
+			FinishOperationProgress();
             logger.setState("Writing done", Color.DarkGreen);
             return true;
         }
@@ -332,6 +352,7 @@ namespace BK7231Flasher
         {
             if (!WriteFlash(ofs, len, buffer)) return false;
 
+			addLogLine("Verification: full readback comparison.");
             byte[] readBack = ReadFlash(ofs, len, true);
             if (readBack == null) return false;
 
@@ -339,6 +360,7 @@ namespace BK7231Flasher
                 if (readBack[i] != buffer[i])
                     return false;
 
+			addSuccess("Full readback verification passed." + Environment.NewLine);
             return true;
         }
 
@@ -384,8 +406,7 @@ namespace BK7231Flasher
         }
         bool doGenericSetup()
         {
-            addLog("Now is: " + DateTime.Now.ToLongDateString() + " " + DateTime.Now.ToLongTimeString() + "." + Environment.NewLine);
-            addLog("Flasher mode: " + chipType + Environment.NewLine);
+			addLogLine("Connecting: CH341 SPI, " + chipType + ".");
 
             closePort();
             hd = new CH341DEV(0);
@@ -440,7 +461,7 @@ namespace BK7231Flasher
             SPIFlashInfo flashInfo = SPIFlashInfoList.Singleton.findFlashForMID(deviceMID);
             if(flashInfo != null)
             {
-                addLogLine(FormatFlashInfo(deviceMID, flashInfo.manufacturer, flashSize));
+				addSuccess(FormatFlashInfo(deviceMID, flashInfo.manufacturer, flashSize, flashInfo.icName) + Environment.NewLine);
                 if(flashInfo.szMem != flashSize)
                 {
                     addWarningLine("JEDEC flash size differs from flash list size: JEDEC="
@@ -483,11 +504,9 @@ namespace BK7231Flasher
 
         public override void doRead(int startSector = 0x000, int sectors = 10, bool fullRead = false)
         {
-			if (finalReadbackVerification.HasValue)
-			{
-				ms?.Dispose();
-				ms = null;
-			}
+			readFailed = true;
+			ms?.Dispose();
+			ms = null;
             if (doGenericSetup() == false)
             {
                 return;
@@ -558,10 +577,14 @@ namespace BK7231Flasher
 
         public bool doReadInternal(uint addr, int len)
         {
+			readFailed = true;
+			ms?.Dispose();
+			ms = null;
             byte[] res = ReadFlash(addr, len);
 			if (res != null && VerifyFinalReadback(addr, res, "Backup"))
             {
                 ms = new MemoryStream(res);
+				readFailed = false;
             }
             else
             {
@@ -577,7 +600,7 @@ namespace BK7231Flasher
 
         public override byte[] getReadResult()
         {
-            if (ms == null)
+			if (readFailed || ms == null)
                 return null;
             return ms.ToArray();
         }
@@ -753,9 +776,12 @@ namespace BK7231Flasher
 			if (!VerifyFinalReadback(writeOffset, x, "Write"))
 				return;
             ChipReset();
+			addSuccess("Write complete." + Environment.NewLine);
         }
         bool saveReadResult(string fileName)
         {
+			if (readFailed)
+				return false;
             if (ms == null)
             {
                 addError("There was no result to save." + Environment.NewLine);
@@ -764,8 +790,9 @@ namespace BK7231Flasher
             byte[] dat = ms.ToArray();
             string fullPath = "backups/" + fileName;
             File.WriteAllBytes(fullPath, dat);
-            addSuccess("Wrote " + dat.Length + " to " + fileName + Environment.NewLine);
+			addLogLine("Saved: " + dat.Length + " bytes to " + fullPath + ".");
             logger.onReadResultQIOSaved(dat, "", fullPath);
+			addSuccess("Read complete." + Environment.NewLine);
             return true;
         }
         public override bool saveReadResult(int startOffset)

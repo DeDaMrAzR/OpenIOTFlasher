@@ -1408,18 +1408,35 @@ namespace BK7231Flasher
 					refreshFirmwaresListOnUiThread();
 			}
 			}
+			catch(OperationCanceledException) when(cts != null && cts.IsCancellationRequested)
+			{
+			}
+			catch(Exception exception)
+			{
+				if(!IsDisposed && !Disposing)
+					addOperationLogLine("Read operation failed: " + exception.Message.TrimEnd('\r', '\n'), Color.Red);
+			}
 			finally
 			{
 				if (ownsSv6x66OperationCompletion)
 					completeSv6x66Operation();
-			}
-
-			if (ownsSv6x66OperationCompletion)
-				return;
-            worker = null;
+				else
+				{
+					worker = null;
             //setButtonReadLabel(label_startRead);
-            clearUp();
-            setButtonStates(true);
+					try { clearUp(); }
+					catch(Exception exception)
+					{
+						if(!IsDisposed && !Disposing)
+							addOperationLogLine("Read cleanup failed: " + exception.Message.TrimEnd('\r', '\n'), Color.Red);
+					}
+					finally
+					{
+						if(!IsDisposed && !Disposing)
+							setButtonStates(true);
+					}
+				}
+			}
         }
 
 		void restoreSv6x66Thread(object state)
