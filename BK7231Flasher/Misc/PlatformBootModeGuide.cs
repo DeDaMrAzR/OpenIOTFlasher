@@ -2,231 +2,231 @@ using System.Collections.Generic;
 
 namespace BK7231Flasher
 {
-    public static class PlatformBootModeGuide
-    {
-        static readonly IReadOnlyDictionary<BKType, string> Instructions = new Dictionary<BKType, string>()
-        {
-            { BKType.BK7231M, GetBekenUart1Instructions("BK7231M") },
-            { BKType.BK7231N, GetBekenUart1Instructions("BK7231N") },
-            { BKType.BK7231T, GetBekenUart1Instructions("BK7231T") },
-            { BKType.BK7231U, GetBekenUart1Instructions("BK7231U") },
-            { BKType.BK7236, GetBekenUartInstructions("BK7236", "download UART", "DL_UART_TX", "DL_UART_RX") },
-            { BKType.BK7238, GetBekenUart1Instructions("BK7238") },
-            { BKType.BK7239N, GetBekenUartInstructions("BK7239N", "download UART", "DL_UART_TX", "DL_UART_RX") },
-            { BKType.BK7252, GetBekenUart1Instructions("BK7252") },
-            { BKType.BK7252N, GetBekenUart1Instructions("BK7252N") },
-            { BKType.BK7258, GetBekenUartInstructions("BK7258", "download UART", "DL_UART_TX", "DL_UART_RX") },
-            { BKType.BL602, GetBLInstructions("BL602", "IO16", "IO7", "IO8") },
-            { BKType.BL702, GetBLInstructions("BL702", "IO14", "IO15", "IO28") },
-            { BKType.BL616, GetBLInstructions("BL616", "IO21", "IO22", "IO2") },
-            { BKType.LN882H, GetLn882xInstructions("LN882H", "A2", "A3", "BOOT/GPIOA9") },
-            { BKType.LN8825, GetLn882xInstructions("LN8825B", "B9", "B8", "BOOT/GPIOA10") },
-            { BKType.ESP32, "" },
-            { BKType.ESP32S2, "" },
-            { BKType.ESP32C2, "" },
-            { BKType.ESP32C3, "" },
-            { BKType.ESP32C5, "" },
-            { BKType.ESP32C6, "" },
-            { BKType.ESP32C61, "" },
-            { BKType.ESP32S3, "" },
-            { BKType.ESP8266, "" },
-            { BKType.ECR6600, GetEcr6600Instructions() },
-            { BKType.GD32VW553, GetGd32vw553Instructions() },
-            { BKType.OPL1000A2, GetOplInstructions() },
-            { BKType.RTL8710B, GetRtlUartDownloadInstructions("RTL8710B", "PA29", "PA30") },
-            { BKType.RTL8720D, GetRtlUartDownloadInstructions("RTL8720D", "PA8", "PA7") },
-            { BKType.RTL8721DA, GetRtlUartDownloadInstructions("RTL8721DA", "PB4", "PB5") },
-            { BKType.RTL8720E, GetRtlUartDownloadInstructions("RTL8720E", "PA19", "PA20") },
-            { BKType.RTL87X0C, GetRtl87x0cInstructions() },
-            { BKType.RDA5981, GetRda5981Instructions() },
-            { BKType.TR6260, GetTR6260Instructions() },
-            { BKType.W600, "" },
-            { BKType.W800, GetW800Instructions() },
-            { BKType.XR806, GetXr806Instructions() },
-            { BKType.XR809, GetXrUart0TwoBootPinsInstructions("XR809") },
-            { BKType.XR872, GetXrUart0TwoBootPinsInstructions("XR872") },
-            { BKType.SV6X66, GetSv6x66Instructions() },
-        };
+	public static class PlatformBootModeGuide
+	{
+		static readonly IReadOnlyDictionary<BKType, string> Instructions = new Dictionary<BKType, string>()
+		{
+			{ BKType.BK7231M, GetBekenUart1Instructions("BK7231M") },
+			{ BKType.BK7231N, GetBekenUart1Instructions("BK7231N") },
+			{ BKType.BK7231T, GetBekenUart1Instructions("BK7231T") },
+			{ BKType.BK7231U, GetBekenUart1Instructions("BK7231U") },
+			{ BKType.BK7236, GetBekenUartInstructions("BK7236", "download UART", "DL_UART_TX", "DL_UART_RX") },
+			{ BKType.BK7238, GetBekenUart1Instructions("BK7238") },
+			{ BKType.BK7239N, GetBekenUartInstructions("BK7239N", "download UART", "DL_UART_TX", "DL_UART_RX") },
+			{ BKType.BK7252, GetBekenUart1Instructions("BK7252") },
+			{ BKType.BK7252N, GetBekenUart1Instructions("BK7252N") },
+			{ BKType.BK7258, GetBekenUartInstructions("BK7258", "download UART", "DL_UART_TX", "DL_UART_RX") },
+			{ BKType.BL602, GetBLInstructions("BL602", "IO16", "IO7", "IO8") },
+			{ BKType.BL702, GetBLInstructions("BL702", "IO14", "IO15", "IO28") },
+			{ BKType.BL616, GetBLInstructions("BL616", "IO21", "IO22", "IO2") },
+			{ BKType.LN882H, GetLn882xInstructions("LN882H", "A2", "A3", "BOOT/GPIOA9") },
+			{ BKType.LN8825, GetLn882xInstructions("LN8825B", "B9", "B8", "BOOT/GPIOA10") },
+			{ BKType.ESP32, "" },
+			{ BKType.ESP32S2, "" },
+			{ BKType.ESP32C2, "" },
+			{ BKType.ESP32C3, "" },
+			{ BKType.ESP32C5, "" },
+			{ BKType.ESP32C6, "" },
+			{ BKType.ESP32C61, "" },
+			{ BKType.ESP32S3, "" },
+			{ BKType.ESP8266, "" },
+			{ BKType.ECR6600, GetEcr6600Instructions() },
+			{ BKType.GD32VW553, GetGd32vw553Instructions() },
+			{ BKType.OPL1000A2, GetOplInstructions() },
+			{ BKType.RTL8710B, GetRtlUartDownloadInstructions("RTL8710B", "PA29", "PA30") },
+			{ BKType.RTL8720D, GetRtlUartDownloadInstructions("RTL8720D", "PA8", "PA7") },
+			{ BKType.RTL8721DA, GetRtlUartDownloadInstructions("RTL8721DA", "PB4", "PB5") },
+			{ BKType.RTL8720E, GetRtlUartDownloadInstructions("RTL8720E", "PA19", "PA20") },
+			{ BKType.RTL87X0C, GetRtl87x0cInstructions() },
+			{ BKType.RDA5981, GetRda5981Instructions() },
+			{ BKType.TR6260, GetTR6260Instructions() },
+			{ BKType.W600, "" },
+			{ BKType.W800, GetW800Instructions() },
+			{ BKType.XR806, GetXr806Instructions() },
+			{ BKType.XR809, GetXrUart0TwoBootPinsInstructions("XR809") },
+			{ BKType.XR872, GetXrUart0TwoBootPinsInstructions("XR872") },
+			{ BKType.SV6X66, GetSv6x66Instructions() },
+		};
 
-        static string GetSv6x66Instructions()
-        {
-            return "Connect one 3.3 V USB-to-TTL UART to the SV6x66 product/factory port:" + System.Environment.NewLine +
-                "- Adapter RX -> SV6166F GPIO7 / TXD1" + System.Environment.NewLine +
-                "- Adapter TX -> SV6166F GPIO6 / RXD1" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                "- Reset the target manually when prompted" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "Backup and full restore support targets running stock FWSWES-SV04MATE-3.7.1 or the recognized CKW04 OpenBeken factory profile. Application installation accepts validated dual-bank OpenBeken bundles (.bin or .sv6ota). Factory entry uses 9600 baud, loader staging uses 115200, and flash operations use the selected rate. Stock firmware selects the inactive bank; OpenBeken reports its running bank so the flasher can stage the opposite bank. The loader handoff is validated. RTS is not used by the GUI. Creating a backup replaces the inactive bank; the saved 2 MiB image is normalized and cannot preserve that bank's previous contents. Full restore writes the complete backup unchanged, including its saved boot selector last. If this procedure is stopped before completion, restoring chip functionality will require SPI/USB recovery!";
-        }
+		static string GetSv6x66Instructions()
+		{
+			return "Connect one 3.3 V USB-to-TTL UART to the SV6x66 product/factory port:" + System.Environment.NewLine +
+				"- Adapter RX -> SV6166F GPIO7 / TXD1" + System.Environment.NewLine +
+				"- Adapter TX -> SV6166F GPIO6 / RXD1" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				"- Reset the target manually when prompted" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"Backup and full restore support targets running stock FWSWES-SV04MATE-3.7.1 or the recognized CKW04 OpenBeken factory profile. Application installation accepts validated dual-bank OpenBeken bundles (.bin or .sv6ota). Factory entry uses 9600 baud, loader staging uses 115200, and flash operations use the selected rate. Stock firmware selects the inactive bank; OpenBeken reports its running bank so the flasher can stage the opposite bank. The loader handoff is validated. RTS is not used by the GUI. Creating a backup replaces the inactive bank; the saved 2 MiB image is normalized and cannot preserve that bank's previous contents. Full restore writes the complete backup unchanged, including its saved boot selector last. If this procedure is stopped before completion, restoring chip functionality will require SPI/USB recovery!";
+		}
 
-        static string GetBekenUart1Instructions(string platformName)
-        {
-            return GetBekenUartInstructions(platformName, "UART1", "TX1", "RX1");
-        }
+		static string GetBekenUart1Instructions(string platformName)
+		{
+			return GetBekenUartInstructions(platformName, "UART1", "TX1", "RX1");
+		}
 
-        static string GetBekenUartInstructions(string platformName, string portName, string txName, string rxName)
-        {
-            return "Connect the " + platformName + " " + portName + " flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> " + platformName + " " + txName + " (GPIO11 / P11)" + System.Environment.NewLine +
-                "- Adapter TX -> " + platformName + " " + rxName + " (GPIO10 / P10)" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "Start the operation first. While the tool is trying to connect, reset the chip by briefly pulling CEN to GND, or by power-cycling the 3.3 V supply. If linking does not start, try the reset/power-cycle again.";
-        }
+		static string GetBekenUartInstructions(string platformName, string portName, string txName, string rxName)
+		{
+			return "Connect the " + platformName + " " + portName + " flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				"- Adapter RX -> " + platformName + " " + txName + " (GPIO11 / P11)" + System.Environment.NewLine +
+				"- Adapter TX -> " + platformName + " " + rxName + " (GPIO10 / P10)" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"Start the operation first. While the tool is trying to connect, reset the chip by briefly pulling CEN to GND, or by power-cycling the 3.3 V supply. If linking does not start, try the reset/power-cycle again.";
+		}
 
-        static string GetBLInstructions(string platformName, string txPin, string rxPin, string bootPin)
-        {
-            return $"Connect the {platformName} UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                $"- Adapter RX -> {platformName} {txPin} / TX0" + System.Environment.NewLine +
-                $"- Adapter TX -> {platformName} {rxPin} / RX0" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                $"- {bootPin} / BOOT -> 3.3 V" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                $"With {bootPin} / BOOT pulled high, reset the chip by briefly pulling EN to GND, or by power-cycling the 3.3 V supply.";
-        }
+		static string GetBLInstructions(string platformName, string txPin, string rxPin, string bootPin)
+		{
+			return $"Connect the {platformName} UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				$"- Adapter RX -> {platformName} {txPin} / TX0" + System.Environment.NewLine +
+				$"- Adapter TX -> {platformName} {rxPin} / RX0" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				$"- {bootPin} / BOOT -> 3.3 V" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				$"With {bootPin} / BOOT pulled high, reset the chip by briefly pulling EN to GND, or by power-cycling the 3.3 V supply.";
+		}
 
-        static string GetLn882xInstructions(string platformName, string txPin, string rxPin, string bootPin)
-        {
-            return "Connect the " + platformName + " UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> " + platformName + " " + txPin + " / TX0" + System.Environment.NewLine +
-                "- Adapter TX -> " + platformName + " " + rxPin + " / RX0" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                "- " + bootPin + " -> GND" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "With " + bootPin + " held low, unplug the USB-to-TTL adapter from the computer, plug it back in, then power on the 3.3v supply.";
-        }
+		static string GetLn882xInstructions(string platformName, string txPin, string rxPin, string bootPin)
+		{
+			return "Connect the " + platformName + " UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				"- Adapter RX -> " + platformName + " " + txPin + " / TX0" + System.Environment.NewLine +
+				"- Adapter TX -> " + platformName + " " + rxPin + " / RX0" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				"- " + bootPin + " -> GND" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"With " + bootPin + " held low, unplug the USB-to-TTL adapter from the computer, plug it back in, then power on the 3.3v supply.";
+		}
 
-        static string GetRtl87x0cInstructions()
-        {
-            return "Connect the RTL87X0C UART2 flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> RTL87X0C TX2 (Log_TX / PA16)" + System.Environment.NewLine +
-                "- Adapter TX -> RTL87X0C RX2 (Log_RX / PA15)" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                "- PA00 / GPIO0 -> 3.3 V" + System.Environment.NewLine +
-                "- PA13 / GPIO13 (RXD) -> 3.3 V" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "With PA00 and PA13 pulled high, reset the chip by briefly pulling CEN to GND, or by power-cycling the 3.3 V supply.";
-        }
+		static string GetRtl87x0cInstructions()
+		{
+			return "Connect the RTL87X0C UART2 flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				"- Adapter RX -> RTL87X0C TX2 (Log_TX / PA16)" + System.Environment.NewLine +
+				"- Adapter TX -> RTL87X0C RX2 (Log_RX / PA15)" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				"- PA00 / GPIO0 -> 3.3 V" + System.Environment.NewLine +
+				"- PA13 / GPIO13 (RXD) -> 3.3 V" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"With PA00 and PA13 pulled high, reset the chip by briefly pulling CEN to GND, or by power-cycling the 3.3 V supply.";
+		}
 
-        static string GetRtlUartDownloadInstructions(string platformName, string logRxPin, string logTxPin)
-        {
-            return $"Connect the {platformName} log UART to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                $"- Adapter RX -> {platformName} Log_TX ({logTxPin})" + System.Environment.NewLine +
-                $"- Adapter TX -> {platformName} Log_RX ({logRxPin})" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                $"- Log_TX ({logTxPin}) -> GND temporarily during reset" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                $"With {logTxPin} held low, reset the chip by briefly pulling CEN to GND and releasing it, or by power-cycling the 3.3 V supply. After reset, remove the temporary {logTxPin}-to-GND connection, leaving the UART connections in place. Then start the operation.";
-        }
+		static string GetRtlUartDownloadInstructions(string platformName, string logRxPin, string logTxPin)
+		{
+			return $"Connect the {platformName} log UART to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				$"- Adapter RX -> {platformName} Log_TX ({logTxPin})" + System.Environment.NewLine +
+				$"- Adapter TX -> {platformName} Log_RX ({logRxPin})" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				$"- Log_TX ({logTxPin}) -> GND temporarily during reset" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				$"With {logTxPin} held low, reset the chip by briefly pulling CEN to GND and releasing it, or by power-cycling the 3.3 V supply. After reset, remove the temporary {logTxPin}-to-GND connection, leaving the UART connections in place. Then start the operation.";
+		}
 
-        static string GetEcr6600Instructions()
-        {
-            return "Connect the ECR6600 UART0 flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> ECR6600 TX0 (GPIO6)" + System.Environment.NewLine +
-                "- Adapter TX -> ECR6600 RX0 (GPIO5)" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "Start the operation first. While the tool is trying to connect, reset the target by briefly pulling RST low, or power-cycle the 3.3 V supply. If linking does not start, try the reset or power-cycle again.";
-        }
+		static string GetEcr6600Instructions()
+		{
+			return "Connect the ECR6600 UART0 flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				"- Adapter RX -> ECR6600 TX0 (GPIO6)" + System.Environment.NewLine +
+				"- Adapter TX -> ECR6600 RX0 (GPIO5)" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"Start the operation first. While the tool is trying to connect, reset the target by briefly pulling RST low, or power-cycle the 3.3 V supply. If linking does not start, try the reset or power-cycle again.";
+		}
 
-        static string GetW800Instructions()
-        {
-            return "Connect the W800 UART0 flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> W800 UART0_TX (PB19)" + System.Environment.NewLine +
-                "- Adapter TX -> W800 UART0_RX (PB20)" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "First try starting the operation with the target running normally. The flasher will send the AT+Z software-reset command at 115200 baud, then send ESC characters while waiting for ROM download mode. Software reset only works when the existing firmware accepts WinnerMicro AT commands." + System.Environment.NewLine +
-                "If automatic entry does not work, start the operation, hold BOOTMODE low, then reset the chip by briefly pulling RESET low or by power-cycling the 3.3 V supply. Keep BOOTMODE low for at least 30 ms after reset or power-on, then release it while the tool is trying to connect.";
-        }
+		static string GetW800Instructions()
+		{
+			return "Connect the W800 UART0 flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				"- Adapter RX -> W800 UART0_TX (PB19)" + System.Environment.NewLine +
+				"- Adapter TX -> W800 UART0_RX (PB20)" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"First try starting the operation with the target running normally. The flasher will send the AT+Z software-reset command at 115200 baud, then send ESC characters while waiting for ROM download mode. Software reset only works when the existing firmware accepts WinnerMicro AT commands." + System.Environment.NewLine +
+				"If automatic entry does not work, start the operation, hold BOOTMODE low, then reset the chip by briefly pulling RESET low or by power-cycling the 3.3 V supply. Keep BOOTMODE low for at least 30 ms after reset or power-on, then release it while the tool is trying to connect.";
+		}
 
-        static string GetGd32vw553Instructions()
-        {
-            return "Connect the GD32VW553 UART flash download port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> GD32VW553 TX0 (PB15) or TX1 (PA4) or TX2 (PA6)" + System.Environment.NewLine +
-                "- Adapter TX -> GD32VW553 RX0 (PA8) or RX1 (PA5) or RX2 (PA7)" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                "- PC8 / BOOT0 -> 3.3 V" + System.Environment.NewLine +
-                "- PB1 / BOOT1 -> GND if the target does not already hold BOOT1 low" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "With BOOT0 held high, reset the chip with RST/NRST or power-cycle the 3.3 V supply. Ensure that you connect to a single UART port (like RX0/TX0, and not RX1/TX2). Once the target is in UART download mode, start the operation.";
-        }
+		static string GetGd32vw553Instructions()
+		{
+			return "Connect the GD32VW553 UART flash download port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				"- Adapter RX -> GD32VW553 TX0 (PB15) or TX1 (PA4) or TX2 (PA6)" + System.Environment.NewLine +
+				"- Adapter TX -> GD32VW553 RX0 (PA8) or RX1 (PA5) or RX2 (PA7)" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				"- PC8 / BOOT0 -> 3.3 V" + System.Environment.NewLine +
+				"- PB1 / BOOT1 -> GND if the target does not already hold BOOT1 low" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"With BOOT0 held high, reset the chip with RST/NRST or power-cycle the 3.3 V supply. Ensure that you connect to a single UART port (like RX0/TX0, and not RX1/TX2). Once the target is in UART download mode, start the operation.";
+		}
 
-        static string GetRda5981Instructions()
-        {
-            return "Connect the RDA5981 UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> RDA5981 TX0 (GPIO27)" + System.Environment.NewLine +
-                "- Adapter TX -> RDA5981 RX (GPIO26)" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                "- IO21 -> 3.3 V if the target does not enter UART download mode" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "Start the operation first. While the tool is trying to connect, reset or power-cycle the device; if linking does not start, try again with IO21 pulled high.";
-        }
+		static string GetRda5981Instructions()
+		{
+			return "Connect the RDA5981 UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				"- Adapter RX -> RDA5981 TX0 (GPIO27)" + System.Environment.NewLine +
+				"- Adapter TX -> RDA5981 RX (GPIO26)" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				"- IO21 -> 3.3 V if the target does not enter UART download mode" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"Start the operation first. While the tool is trying to connect, reset or power-cycle the device; if linking does not start, try again with IO21 pulled high.";
+		}
 
-        static string GetTR6260Instructions()
-        {
-            return "Connect the TR6260 UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> TR6260 TX0 (GPIO6)" + System.Environment.NewLine +
-                "- Adapter TX -> TR6260 RX0 (GPIO5)" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                "- GPIO14 / TOUT2 / BT0 -> GND" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "With GPIO14 held low, power-cycle the 3.3 V supply. Once the target is in UART download mode, start the operation.";
-        }
+		static string GetTR6260Instructions()
+		{
+			return "Connect the TR6260 UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				"- Adapter RX -> TR6260 TX0 (GPIO6)" + System.Environment.NewLine +
+				"- Adapter TX -> TR6260 RX0 (GPIO5)" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				"- GPIO14 / TOUT2 / BT0 -> GND" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"With GPIO14 held low, power-cycle the 3.3 V supply. Once the target is in UART download mode, start the operation.";
+		}
 
-        static string GetXr806Instructions()
-        {
-            return GetXrUart0Instructions(
-                "XR806",
-                "- PB02 -> GND",
-                "With PB02 held low, start the operation first, reset the chip by pulling CHIP_PWD low and releasing it, then release PB02.");
-        }
+		static string GetXr806Instructions()
+		{
+			return GetXrUart0Instructions(
+				"XR806",
+				"- PB02 -> GND",
+				"With PB02 held low, start the operation first, reset the chip by pulling CHIP_PWD low and releasing it, then release PB02.");
+		}
 
-        static string GetXrUart0TwoBootPinsInstructions(string platformName)
-        {
-            return GetXrUart0Instructions(
-                platformName,
-                "- PB02 -> GND" + System.Environment.NewLine +
-                "- PB03 -> GND",
-                "With PB02 and PB03 held low, start the operation first, then reset the chip by pulling CHIP_PWD low and releasing it, or power-cycle the device.");
-        }
+		static string GetXrUart0TwoBootPinsInstructions(string platformName)
+		{
+			return GetXrUart0Instructions(
+				platformName,
+				"- PB02 -> GND" + System.Environment.NewLine +
+				"- PB03 -> GND",
+				"With PB02 and PB03 held low, start the operation first, then reset the chip by pulling CHIP_PWD low and releasing it, or power-cycle the device.");
+		}
 
-        static string GetXrUart0Instructions(string platformName, string bootPinLines, string bootModeAction)
-        {
-            return "Connect the " + platformName + " UART0 flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> " + platformName + " TX0 (PB00)" + System.Environment.NewLine +
-                "- Adapter TX -> " + platformName + " RX0 (PB01)" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "First try starting the operation with the target running normally. The flasher will send the software 'upgrade' command at 115200 baud before attempting sync. This only works when the existing firmware has its UART console enabled and supports that command." + System.Environment.NewLine +
-                "If software entry does not work, use the hardware boot straps:" + System.Environment.NewLine +
-                bootPinLines + System.Environment.NewLine +
-                bootModeAction;
-        }
+		static string GetXrUart0Instructions(string platformName, string bootPinLines, string bootModeAction)
+		{
+			return "Connect the " + platformName + " UART0 flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				"- Adapter RX -> " + platformName + " TX0 (PB00)" + System.Environment.NewLine +
+				"- Adapter TX -> " + platformName + " RX0 (PB01)" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"First try starting the operation with the target running normally. The flasher will send the software 'upgrade' command at 115200 baud before attempting sync. This only works when the existing firmware has its UART console enabled and supports that command." + System.Environment.NewLine +
+				"If software entry does not work, use the hardware boot straps:" + System.Environment.NewLine +
+				bootPinLines + System.Environment.NewLine +
+				bootModeAction;
+		}
 
-        static string GetOplInstructions()
-        {
-            return "Connect the OPL1000 UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
-                "- Adapter RX -> OPL1000 DBG TX (GPIO0)" + System.Environment.NewLine +
-                "- Adapter TX -> OPL1000 DBG RX (GPIO1)" + System.Environment.NewLine +
-                "- Adapter GND -> target GND" + System.Environment.NewLine +
-                GetPowerAndGroundInstructions() + System.Environment.NewLine +
-                "Start the operation first. While the tool is trying to connect, reset or power-cycle the device.";
-        }
+		static string GetOplInstructions()
+		{
+			return "Connect the OPL1000 UART flashing port to a USB-to-TTL serial adapter:" + System.Environment.NewLine +
+				"- Adapter RX -> OPL1000 DBG TX (GPIO0)" + System.Environment.NewLine +
+				"- Adapter TX -> OPL1000 DBG RX (GPIO1)" + System.Environment.NewLine +
+				"- Adapter GND -> target GND" + System.Environment.NewLine +
+				GetPowerAndGroundInstructions() + System.Environment.NewLine +
+				"Start the operation first. While the tool is trying to connect, reset or power-cycle the device.";
+		}
 
-        static string GetPowerAndGroundInstructions()
-        {
-            return "Use a stable 3.3 V supply and a common ground between the target and USB-to-TTL adapter. The 3.3 V pin on many USB-to-TTL adapters may not provide enough current for reliable operation.";
-        }
+		static string GetPowerAndGroundInstructions()
+		{
+			return "Use a stable 3.3 V supply and a common ground between the target and USB-to-TTL adapter. The 3.3 V pin on many USB-to-TTL adapters may not provide enough current for reliable operation.";
+		}
 
-        public static string GetInstructions(BKType platform)
-        {
-            string instructions;
-            if (Instructions.TryGetValue(platform, out instructions))
-            {
-                return instructions;
-            }
-            return "No ROM-reader bootstrapping notes are catalogued yet for this platform.";
-        }
-    }
+		public static string GetInstructions(BKType platform)
+		{
+			string instructions;
+			if (Instructions.TryGetValue(platform, out instructions))
+			{
+				return instructions;
+			}
+			return "No ROM-reader bootstrapping notes are catalogued yet for this platform.";
+		}
+	}
 }

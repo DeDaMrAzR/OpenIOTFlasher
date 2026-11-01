@@ -10,1599 +10,1599 @@ using System.Diagnostics;
 
 namespace BK7231Flasher
 {
-    public class ESPFlasher : BaseFlasher
-    {
-        public enum ESPCommand : byte
-        {
-            FLASH_BEGIN = 0x02,
-            FLASH_DATA = 0x03,
-            FLASH_END = 0x04,
-            MEM_BEGIN = 0x05,
-            MEM_END = 0x06,
-            MEM_DATA = 0x07,
-            SYNC = 0x08,
-            WRITE_REG = 0x09,
-            READ_REG = 0x0A,
-            SPI_SET_PARAMS = 0x0B,
-            SPI_ATTACH = 0x0D,
-            READ_FLASH_SLOW = 0x0E,
-            CHANGE_BAUDRATE = 0x0F,
-            SPI_FLASH_MD5 = 0x13,
-            GET_SECURITY_INFO = 0x14,
-            ERASE_FLASH = 0xD0,
-            READ_FLASH = 0xD2,
-        }
+	public class ESPFlasher : BaseFlasher
+	{
+		public enum ESPCommand : byte
+		{
+			FLASH_BEGIN = 0x02,
+			FLASH_DATA = 0x03,
+			FLASH_END = 0x04,
+			MEM_BEGIN = 0x05,
+			MEM_END = 0x06,
+			MEM_DATA = 0x07,
+			SYNC = 0x08,
+			WRITE_REG = 0x09,
+			READ_REG = 0x0A,
+			SPI_SET_PARAMS = 0x0B,
+			SPI_ATTACH = 0x0D,
+			READ_FLASH_SLOW = 0x0E,
+			CHANGE_BAUDRATE = 0x0F,
+			SPI_FLASH_MD5 = 0x13,
+			GET_SECURITY_INFO = 0x14,
+			ERASE_FLASH = 0xD0,
+			READ_FLASH = 0xD2,
+		}
 
-        const byte SLIP_END = 0xC0;
-        const byte SLIP_ESC = 0xDB;
-        const byte SLIP_ESC_END = 0xDC;
-        const byte SLIP_ESC_ESC = 0xDD;
+		const byte SLIP_END = 0xC0;
+		const byte SLIP_ESC = 0xDB;
+		const byte SLIP_ESC_END = 0xDC;
+		const byte SLIP_ESC_ESC = 0xDD;
 
-        // ESP32 stub flasher binary (from esptool v1 JSON)
-        const int ESP_RAM_BLOCK = 0x1800; // Must match esptool default
+		// ESP32 stub flasher binary (from esptool v1 JSON)
+		const int ESP_RAM_BLOCK = 0x1800; // Must match esptool default
 
-        bool isStub = false;
-        bool bIsESP8266 => chipType == BKType.ESP8266;
-        bool bIsESP32S2 => chipType == BKType.ESP32S2;
-        bool bIsESP32C2 => chipType == BKType.ESP32C2;
-        bool bIsESP32S3 => chipType == BKType.ESP32S3;
-        bool bIsESP32C3 => chipType == BKType.ESP32C3;
-        bool bIsESP32C5 => chipType == BKType.ESP32C5;
-        bool bIsESP32C6 => chipType == BKType.ESP32C6;
-        bool bIsESP32C61 => chipType == BKType.ESP32C61;
-        string detectedChip = "ESP";
-        byte[] _slipBuf = new byte[4096];
-        public bool LegacyMode { get; set; } = false;
+		bool isStub = false;
+		bool bIsESP8266 => chipType == BKType.ESP8266;
+		bool bIsESP32S2 => chipType == BKType.ESP32S2;
+		bool bIsESP32C2 => chipType == BKType.ESP32C2;
+		bool bIsESP32S3 => chipType == BKType.ESP32S3;
+		bool bIsESP32C3 => chipType == BKType.ESP32C3;
+		bool bIsESP32C5 => chipType == BKType.ESP32C5;
+		bool bIsESP32C6 => chipType == BKType.ESP32C6;
+		bool bIsESP32C61 => chipType == BKType.ESP32C61;
+		string detectedChip = "ESP";
+		byte[] _slipBuf = new byte[4096];
+		public bool LegacyMode { get; set; } = false;
 
-        bool isESP32S3RegFamily()
-        {
-            // C2/C3/S3 share the same SPI register block layout.
-            return bIsESP32C2 || bIsESP32C3 || bIsESP32S3;
-        }
+		bool isESP32S3RegFamily()
+		{
+			// C2/C3/S3 share the same SPI register block layout.
+			return bIsESP32C2 || bIsESP32C3 || bIsESP32S3;
+		}
 
-        bool isESP32C6RegFamily()
-        {
-            // C5/C6/C61 share a different SPI base address but same layout.
-            return bIsESP32C5 || bIsESP32C6 || bIsESP32C61;
-        }
+		bool isESP32C6RegFamily()
+		{
+			// C5/C6/C61 share a different SPI base address but same layout.
+			return bIsESP32C5 || bIsESP32C6 || bIsESP32C61;
+		}
 
-        string GetStubNameForSelectedChip()
-        {
-            switch (chipType)
-            {
-                case BKType.ESP8266:
-                    return "ESP8266_Stub";
-                case BKType.ESP32S2:
-                    return "ESP32S2_Stub";
-                case BKType.ESP32C2:
-                    return "ESP32C2_Stub";
-                case BKType.ESP32C3:
-                    return "ESP32C3_Stub";
-                case BKType.ESP32C5:
-                    return "ESP32C5_Stub";
-                case BKType.ESP32C6:
-                    return "ESP32C6_Stub";
-                case BKType.ESP32C61:
-                    return "ESP32C61_Stub";
-                case BKType.ESP32S3:
-                    return "ESP32S3_Stub";
-                case BKType.ESP32:
-                default:
-                    return "ESP32_Stub";
-            }
-        }
+		string GetStubNameForSelectedChip()
+		{
+			switch (chipType)
+			{
+				case BKType.ESP8266:
+					return "ESP8266_Stub";
+				case BKType.ESP32S2:
+					return "ESP32S2_Stub";
+				case BKType.ESP32C2:
+					return "ESP32C2_Stub";
+				case BKType.ESP32C3:
+					return "ESP32C3_Stub";
+				case BKType.ESP32C5:
+					return "ESP32C5_Stub";
+				case BKType.ESP32C6:
+					return "ESP32C6_Stub";
+				case BKType.ESP32C61:
+					return "ESP32C61_Stub";
+				case BKType.ESP32S3:
+					return "ESP32S3_Stub";
+				case BKType.ESP32:
+				default:
+					return "ESP32_Stub";
+			}
+		}
 
-        public ESPFlasher(CancellationToken ct) : base(ct)
-        {
-        }
+		public ESPFlasher(CancellationToken ct) : base(ct)
+		{
+		}
 
-        MemoryStream ms;
+		MemoryStream ms;
 		bool readFailed;
 
-        public override byte[] getReadResult()
-        {
+		public override byte[] getReadResult()
+		{
 			if (readFailed || ms == null)
-                return null;
-            return ms.ToArray();
-        }
+				return null;
+			return ms.ToArray();
+		}
 
-        bool saveReadResult(string fileName)
-        {
+		bool saveReadResult(string fileName)
+		{
 			if (readFailed) return false;
-            if (ms == null)
-            {
-                addError("There was no result to save." + Environment.NewLine);
-                return false;
-            }
-            byte[] dat = ms.ToArray();
-            string fullPath = "backups/" + fileName;
-            File.WriteAllBytes(fullPath, dat);
+			if (ms == null)
+			{
+				addError("There was no result to save." + Environment.NewLine);
+				return false;
+			}
+			byte[] dat = ms.ToArray();
+			string fullPath = "backups/" + fileName;
+			File.WriteAllBytes(fullPath, dat);
 			addLogLine("Saved: " + dat.Length + " bytes to " + fullPath + ".");
-            logger.onReadResultQIOSaved(dat, null, fullPath);
+			logger.onReadResultQIOSaved(dat, null, fullPath);
 			addSuccess("Read complete." + Environment.NewLine);
-            return true;
-        }
+			return true;
+		}
 
-        public override bool saveReadResult(int startOffset)
-        {
-            string typeStr = startOffset.ToString("X");
-            string fileName = MiscUtils.formatDateNowFileName("readResult_" + chipType + "_" + typeStr, backupName, "bin");
-            return saveReadResult(fileName);
-        }
+		public override bool saveReadResult(int startOffset)
+		{
+			string typeStr = startOffset.ToString("X");
+			string fileName = MiscUtils.formatDateNowFileName("readResult_" + chipType + "_" + typeStr, backupName, "bin");
+			return saveReadResult(fileName);
+		}
 
-        static Dictionary<uint, string> ChipMagicValues = new Dictionary<uint, string>()
-        {
-            { 0x00F01D83, "ESP32" },
-            { 0x000007C6, "ESP32-S2" },
-            { 0xFFF0C101, "ESP8266" },
-        };
+		static Dictionary<uint, string> ChipMagicValues = new Dictionary<uint, string>()
+		{
+			{ 0x00F01D83, "ESP32" },
+			{ 0x000007C6, "ESP32-S2" },
+			{ 0xFFF0C101, "ESP8266" },
+		};
 
-        static Dictionary<uint, string> ChipIDs = new Dictionary<uint, string>()
-        {
-            { 0, "ESP32" },
-            { 2, "ESP32-S2" },
-            { 5, "ESP32-C3" },
-            { 9, "ESP32-S3" },
-            { 12, "ESP32-C2" },
-            { 23, "ESP32-C5" },
-            { 13, "ESP32-C6" },
-            { 20, "ESP32-C61" },
-            { 16, "ESP32-H2" },
-            { 18, "ESP32-P4" },
-        };
+		static Dictionary<uint, string> ChipIDs = new Dictionary<uint, string>()
+		{
+			{ 0, "ESP32" },
+			{ 2, "ESP32-S2" },
+			{ 5, "ESP32-C3" },
+			{ 9, "ESP32-S3" },
+			{ 12, "ESP32-C2" },
+			{ 23, "ESP32-C5" },
+			{ 13, "ESP32-C6" },
+			{ 20, "ESP32-C61" },
+			{ 16, "ESP32-H2" },
+			{ 18, "ESP32-P4" },
+		};
 
 
-        bool openPort()
-        {
-            try
-            {
-                if (serial == null)
-                {
-                    // ESP32 ROM bootloader always starts at 115200.
-                    // We sync at 115200, then change baud after stub upload.
-                    serial = new SerialPort(serialName, 115200);
-                    serial.ReadBufferSize = 32768;
-                    serial.Open();
-                }
-                else
-                {
-                    // Reset baud to 115200 for ROM bootloader sync
-                    // (port may still be at a higher baud from a previous operation)
-                    serial.BaudRate = 115200;
-                }
-                serial.DiscardInBuffer();
-                serial.DiscardOutBuffer();
-                return true;
-            }
-            catch (Exception ex)
-            {
-                addError("Failed to open serial port: " + ex.Message);
-                return false;
-            }
-        }
+		bool openPort()
+		{
+			try
+			{
+				if (serial == null)
+				{
+					// ESP32 ROM bootloader always starts at 115200.
+					// We sync at 115200, then change baud after stub upload.
+					serial = new SerialPort(serialName, 115200);
+					serial.ReadBufferSize = 32768;
+					serial.Open();
+				}
+				else
+				{
+					// Reset baud to 115200 for ROM bootloader sync
+					// (port may still be at a higher baud from a previous operation)
+					serial.BaudRate = 115200;
+				}
+				serial.DiscardInBuffer();
+				serial.DiscardOutBuffer();
+				return true;
+			}
+			catch (Exception ex)
+			{
+				addError("Failed to open serial port: " + ex.Message);
+				return false;
+			}
+		}
 
-        public bool Sync()
-        {
-            byte[] syncData = new byte[36];
-            syncData[0] = 0x07;
-            syncData[1] = 0x07;
-            syncData[2] = 0x12;
-            syncData[3] = 0x20;
-            for (int i = 4; i < 36; i++) syncData[i] = 0x55;
+		public bool Sync()
+		{
+			byte[] syncData = new byte[36];
+			syncData[0] = 0x07;
+			syncData[1] = 0x07;
+			syncData[2] = 0x12;
+			syncData[3] = 0x20;
+			for (int i = 4; i < 36; i++) syncData[i] = 0x55;
 
-            for (int i = 0; i < 20; i++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
+			for (int i = 0; i < 20; i++)
+			{
+				cancellationToken.ThrowIfCancellationRequested();
 				SetOperationProgress($"Synchronizing: attempt {i + 1}...", Color.Black);
-                try
-                {
-                    // send sync
-                    sendCommand(ESPCommand.SYNC, syncData);
-                    
-                    // read response
-                    var resp = readPacket(300, ESPCommand.SYNC);
-                    if (resp != null)
-                    {
-                        // esptool drains 7 additional SYNC responses after the first
-                        for (int j = 0; j < 7; j++)
-                        {
-                            try
-                            {
-                                readPacket(100, ESPCommand.SYNC);
-                            }
-                            catch { }
-                        }
+				try
+				{
+					// send sync
+					sendCommand(ESPCommand.SYNC, syncData);
+					
+					// read response
+					var resp = readPacket(300, ESPCommand.SYNC);
+					if (resp != null)
+					{
+						// esptool drains 7 additional SYNC responses after the first
+						for (int j = 0; j < 7; j++)
+						{
+							try
+							{
+								readPacket(100, ESPCommand.SYNC);
+							}
+							catch { }
+						}
 						FinishOperationProgress();
 						addSuccess($"Synchronized on attempt {i + 1}." + Environment.NewLine);
-                        return true;
-                    }
-                }
-                catch (Exception)
-                {
-                    // ignore timeout
-                }
-                Thread.Sleep(50);
-            }
+						return true;
+					}
+				}
+				catch (Exception)
+				{
+					// ignore timeout
+				}
+				Thread.Sleep(50);
+			}
 			FinishOperationProgress();
 			addErrorLine("Synchronization failed after 20 attempts.");
-            return false;
-        }
+			return false;
+		}
 
-        public uint? GetChipId()
-        {
-            // Try GET_SECURITY_INFO first (ESP32-C3 and later)
-            try
-            {
+		public uint? GetChipId()
+		{
+			// Try GET_SECURITY_INFO first (ESP32-C3 and later)
+			try
+			{
 				Debug.WriteLine("Trying GET_SECURITY_INFO...");
-                sendCommand(ESPCommand.GET_SECURITY_INFO, new byte[0]);
-                var resp = readPacket(1000, ESPCommand.GET_SECURITY_INFO);
-                if(resp != null && resp.Length >= 20) 
-                {
-                     // Response format: flags(4), flash_crypt_cnt(1), key_purposes(7), chip_id(4), ...
-                     // Chip ID is at offset 4+1+7 = 12
-                     uint chipId = BitConverter.ToUInt32(resp, 12);
-                     string chipName = "Unknown";
-                     if(ChipIDs.ContainsKey(chipId)) chipName = ChipIDs[chipId];
-                     
+				sendCommand(ESPCommand.GET_SECURITY_INFO, new byte[0]);
+				var resp = readPacket(1000, ESPCommand.GET_SECURITY_INFO);
+				if(resp != null && resp.Length >= 20) 
+				{
+					 // Response format: flags(4), flash_crypt_cnt(1), key_purposes(7), chip_id(4), ...
+					 // Chip ID is at offset 4+1+7 = 12
+					 uint chipId = BitConverter.ToUInt32(resp, 12);
+					 string chipName = "Unknown";
+					 if(ChipIDs.ContainsKey(chipId)) chipName = ChipIDs[chipId];
+					 
 					Debug.WriteLine($"Got Chip ID from Security Info: {chipId} ({chipName})");
-                     return chipId;
-                }
-                else if (resp != null) {
+					 return chipId;
+				}
+				else if (resp != null) {
 					Debug.WriteLine($"GET_SECURITY_INFO returned {resp.Length} bytes.");
-                    if(resp.Length == 4)
+					if(resp.Length == 4)
 						Debug.WriteLine($"Value: {BitConverter.ToUInt32(resp, 0):X}");
-                }
-            }
-            catch(Exception ex)
-            {
+				}
+			}
+			catch(Exception ex)
+			{
 				Debug.WriteLine("GET_SECURITY_INFO failed: " + ex.Message);
-            }
+			}
 
-            // Fallback: Read Magic Register 0x40001000
-            try 
-            {
+			// Fallback: Read Magic Register 0x40001000
+			try 
+			{
 				Debug.WriteLine("Trying ReadReg 0x40001000...");
-                uint val = ReadReg(0x40001000);
-                string chipName = "Unknown";
-                if(ChipMagicValues.ContainsKey(val)) chipName = ChipMagicValues[val];
-                
+				uint val = ReadReg(0x40001000);
+				string chipName = "Unknown";
+				if(ChipMagicValues.ContainsKey(val)) chipName = ChipMagicValues[val];
+				
 				Debug.WriteLine($"Read Magic Reg 0x40001000: {val:X} ({chipName})");
 				if (val == 0) addWarningLine("Read 0, this might indicate read failure or unsupported register.");
-                return val;
-            }
-            catch(Exception ex)
-            {
-                addErrorLine("Failed to read chip magic: " + ex.Message);
-            }
-            return null;
-        }
+				return val;
+			}
+			catch(Exception ex)
+			{
+				addErrorLine("Failed to read chip magic: " + ex.Message);
+			}
+			return null;
+		}
 
-        public uint ReadReg(uint addr)
-        {
-            byte[] payload = BitConverter.GetBytes(addr); // Little Endian
+		public uint ReadReg(uint addr)
+		{
+			byte[] payload = BitConverter.GetBytes(addr); // Little Endian
 			Debug.WriteLine($"Reading Reg {addr:X}...");
-            sendCommand(ESPCommand.READ_REG, payload);
-            var resp = readPacket(3000, ESPCommand.READ_REG);
-            
-            // readPacket returns the 'value' field from the header
-            // for commands with resp_data_len=0 (like READ_REG)
-            if (resp != null && resp.Length >= 4)
-            {
-                return BitConverter.ToUInt32(resp, 0);
-            }
-            
-            throw new Exception($"Failed to read register {addr:X}, resp len {(resp==null?-1:resp.Length)}");
-        }
+			sendCommand(ESPCommand.READ_REG, payload);
+			var resp = readPacket(3000, ESPCommand.READ_REG);
+			
+			// readPacket returns the 'value' field from the header
+			// for commands with resp_data_len=0 (like READ_REG)
+			if (resp != null && resp.Length >= 4)
+			{
+				return BitConverter.ToUInt32(resp, 0);
+			}
+			
+			throw new Exception($"Failed to read register {addr:X}, resp len {(resp==null?-1:resp.Length)}");
+		}
 
 
-        public void WriteReg(uint addr, uint value, uint mask = 0xFFFFFFFF, uint delay = 0)
-        {
-            // Packet: addr(4) + value(4) + mask(4) + delay(4)
-            List<byte> payload = new List<byte>();
-            payload.AddRange(BitConverter.GetBytes(addr));
-            payload.AddRange(BitConverter.GetBytes(value));
-            payload.AddRange(BitConverter.GetBytes(mask));
-            payload.AddRange(BitConverter.GetBytes(delay));
-            
-            sendCommand(ESPCommand.WRITE_REG, payload.ToArray());
-            readPacket(1000, ESPCommand.WRITE_REG);
-        }
+		public void WriteReg(uint addr, uint value, uint mask = 0xFFFFFFFF, uint delay = 0)
+		{
+			// Packet: addr(4) + value(4) + mask(4) + delay(4)
+			List<byte> payload = new List<byte>();
+			payload.AddRange(BitConverter.GetBytes(addr));
+			payload.AddRange(BitConverter.GetBytes(value));
+			payload.AddRange(BitConverter.GetBytes(mask));
+			payload.AddRange(BitConverter.GetBytes(delay));
+			
+			sendCommand(ESPCommand.WRITE_REG, payload.ToArray());
+			readPacket(1000, ESPCommand.WRITE_REG);
+		}
 
-        const uint ESP32_SPI_REG_BASE = 0x3FF42000;
-        const uint ESP32_SPI_W0_OFFS = 0x80;
-        const uint ESP8266_SPI_REG_BASE = 0x60000200;
-        const uint ESP8266_SPI_USR1_OFFS = 0x20;
-        const uint ESP8266_SPI_W0_OFFS = 0x40;
-        const uint SPI_USR_OFFS = 0x1C;
-        const uint SPI_USR2_OFFS = 0x24;
-        const uint SPI_MOSI_DLEN_OFFS = 0x28;
-        const uint SPI_MISO_DLEN_OFFS = 0x2C;
+		const uint ESP32_SPI_REG_BASE = 0x3FF42000;
+		const uint ESP32_SPI_W0_OFFS = 0x80;
+		const uint ESP8266_SPI_REG_BASE = 0x60000200;
+		const uint ESP8266_SPI_USR1_OFFS = 0x20;
+		const uint ESP8266_SPI_W0_OFFS = 0x40;
+		const uint SPI_USR_OFFS = 0x1C;
+		const uint SPI_USR2_OFFS = 0x24;
+		const uint SPI_MOSI_DLEN_OFFS = 0x28;
+		const uint SPI_MISO_DLEN_OFFS = 0x2C;
 
-        // ESP32-S2 shares SPI layout with ESP32-C3/S3 but has a different base.
-        const uint ESP32S2_SPI_REG_BASE = 0x3F402000;
-        // ESP32-C3/S3 SPI register addresses (from esptool target definitions).
-        const uint ESP32S3_SPI_REG_BASE = 0x60002000;
-        // ESP32-C6/C61 SPI register base (layout is the same as C3/S3).
-        const uint ESP32C6_SPI_REG_BASE = 0x60003000;
-        const uint ESP32S3_SPI_USR_OFFS = 0x18;
-        const uint ESP32S3_SPI_USR2_OFFS = 0x20;
-        const uint ESP32S3_SPI_MOSI_DLEN_OFFS = 0x24;
-        const uint ESP32S3_SPI_MISO_DLEN_OFFS = 0x28;
-        const uint ESP32S3_SPI_W0_OFFS = 0x58;
+		// ESP32-S2 shares SPI layout with ESP32-C3/S3 but has a different base.
+		const uint ESP32S2_SPI_REG_BASE = 0x3F402000;
+		// ESP32-C3/S3 SPI register addresses (from esptool target definitions).
+		const uint ESP32S3_SPI_REG_BASE = 0x60002000;
+		// ESP32-C6/C61 SPI register base (layout is the same as C3/S3).
+		const uint ESP32C6_SPI_REG_BASE = 0x60003000;
+		const uint ESP32S3_SPI_USR_OFFS = 0x18;
+		const uint ESP32S3_SPI_USR2_OFFS = 0x20;
+		const uint ESP32S3_SPI_MOSI_DLEN_OFFS = 0x24;
+		const uint ESP32S3_SPI_MISO_DLEN_OFFS = 0x28;
+		const uint ESP32S3_SPI_W0_OFFS = 0x58;
 
-        bool TryReadMacFromEfuse(uint macEfuseReg, out byte[] mac)
-        {
-            mac = new byte[6];
-            try
-            {
-                uint mac0 = ReadReg(macEfuseReg);
-                uint mac1 = ReadReg(macEfuseReg + 4);
+		bool TryReadMacFromEfuse(uint macEfuseReg, out byte[] mac)
+		{
+			mac = new byte[6];
+			try
+			{
+				uint mac0 = ReadReg(macEfuseReg);
+				uint mac1 = ReadReg(macEfuseReg + 4);
 
-                // esptool: struct.pack(">II", mac1, mac0)[2:] -> 6 bytes big-endian
-                mac[0] = (byte)((mac1 >> 8) & 0xFF);
-                mac[1] = (byte)((mac1 >> 0) & 0xFF);
-                mac[2] = (byte)((mac0 >> 24) & 0xFF);
-                mac[3] = (byte)((mac0 >> 16) & 0xFF);
-                mac[4] = (byte)((mac0 >> 8) & 0xFF);
-                mac[5] = (byte)((mac0 >> 0) & 0xFF);
-                return true;
-            }
-            catch
-            {
-                mac = null;
-                return false;
-            }
-        }
+				// esptool: struct.pack(">II", mac1, mac0)[2:] -> 6 bytes big-endian
+				mac[0] = (byte)((mac1 >> 8) & 0xFF);
+				mac[1] = (byte)((mac1 >> 0) & 0xFF);
+				mac[2] = (byte)((mac0 >> 24) & 0xFF);
+				mac[3] = (byte)((mac0 >> 16) & 0xFF);
+				mac[4] = (byte)((mac0 >> 8) & 0xFF);
+				mac[5] = (byte)((mac0 >> 0) & 0xFF);
+				return true;
+			}
+			catch
+			{
+				mac = null;
+				return false;
+			}
+		}
 
-        uint RunSpiFlashCmd(byte cmd, int readBits = 0)
-        {
-            uint baseAddr;
-            uint w0Offs;
-            uint usrOffs;
-            uint usr2Offs;
-            uint mosiDlenOffs;
-            uint misoDlenOffs;
+		uint RunSpiFlashCmd(byte cmd, int readBits = 0)
+		{
+			uint baseAddr;
+			uint w0Offs;
+			uint usrOffs;
+			uint usr2Offs;
+			uint mosiDlenOffs;
+			uint misoDlenOffs;
 
-            if (bIsESP8266)
-            {
-                baseAddr = ESP8266_SPI_REG_BASE;
-                w0Offs = ESP8266_SPI_W0_OFFS;
-                usrOffs = SPI_USR_OFFS;
-                usr2Offs = SPI_USR2_OFFS;
-                mosiDlenOffs = 0; // not used for ESP8266
-                misoDlenOffs = 0; // not used for ESP8266
-            }
-            else if (bIsESP32S2)
-            {
-                baseAddr = ESP32S2_SPI_REG_BASE;
-                w0Offs = ESP32S3_SPI_W0_OFFS;
-                usrOffs = ESP32S3_SPI_USR_OFFS;
-                usr2Offs = ESP32S3_SPI_USR2_OFFS;
-                mosiDlenOffs = ESP32S3_SPI_MOSI_DLEN_OFFS;
-                misoDlenOffs = ESP32S3_SPI_MISO_DLEN_OFFS;
-            }
-            else if (isESP32C6RegFamily())
-            {
-                baseAddr = ESP32C6_SPI_REG_BASE;
-                w0Offs = ESP32S3_SPI_W0_OFFS;
-                usrOffs = ESP32S3_SPI_USR_OFFS;
-                usr2Offs = ESP32S3_SPI_USR2_OFFS;
-                mosiDlenOffs = ESP32S3_SPI_MOSI_DLEN_OFFS;
-                misoDlenOffs = ESP32S3_SPI_MISO_DLEN_OFFS;
-            }
-            else if (isESP32S3RegFamily())
-            {
-                baseAddr = ESP32S3_SPI_REG_BASE;
-                w0Offs = ESP32S3_SPI_W0_OFFS;
-                usrOffs = ESP32S3_SPI_USR_OFFS;
-                usr2Offs = ESP32S3_SPI_USR2_OFFS;
-                mosiDlenOffs = ESP32S3_SPI_MOSI_DLEN_OFFS;
-                misoDlenOffs = ESP32S3_SPI_MISO_DLEN_OFFS;
-            }
-            else
-            {
-                baseAddr = ESP32_SPI_REG_BASE;
-                w0Offs = ESP32_SPI_W0_OFFS;
-                usrOffs = SPI_USR_OFFS;
-                usr2Offs = SPI_USR2_OFFS;
-                mosiDlenOffs = SPI_MOSI_DLEN_OFFS;
-                misoDlenOffs = SPI_MISO_DLEN_OFFS;
-            }
-            
-            // Set lengths (0 MOSI, readBits MISO)
-            if (bIsESP8266)
-            {
-                // ESP8266 has no MOSI/MISO_DLEN registers.
-                // Bit lengths are set via SPI_USR1: bits[31:26]=MISO, bits[25:17]=MOSI
-                uint usr1 = 0;
-                if (readBits > 0)
-                    usr1 |= (uint)((readBits - 1) << 8); // MISO bit length in bits [14:8]
-                // MOSI length = 0 (we're not sending data, just command)
-                WriteReg(baseAddr + ESP8266_SPI_USR1_OFFS, usr1);
-            }
-            else
-            {
-                if(readBits > 0)
-                     WriteReg(baseAddr + misoDlenOffs, (uint)(readBits - 1));
-                else
-                     WriteReg(baseAddr + misoDlenOffs, 0);
-                WriteReg(baseAddr + mosiDlenOffs, 0); // 0 bits MOSI
-            }
+			if (bIsESP8266)
+			{
+				baseAddr = ESP8266_SPI_REG_BASE;
+				w0Offs = ESP8266_SPI_W0_OFFS;
+				usrOffs = SPI_USR_OFFS;
+				usr2Offs = SPI_USR2_OFFS;
+				mosiDlenOffs = 0; // not used for ESP8266
+				misoDlenOffs = 0; // not used for ESP8266
+			}
+			else if (bIsESP32S2)
+			{
+				baseAddr = ESP32S2_SPI_REG_BASE;
+				w0Offs = ESP32S3_SPI_W0_OFFS;
+				usrOffs = ESP32S3_SPI_USR_OFFS;
+				usr2Offs = ESP32S3_SPI_USR2_OFFS;
+				mosiDlenOffs = ESP32S3_SPI_MOSI_DLEN_OFFS;
+				misoDlenOffs = ESP32S3_SPI_MISO_DLEN_OFFS;
+			}
+			else if (isESP32C6RegFamily())
+			{
+				baseAddr = ESP32C6_SPI_REG_BASE;
+				w0Offs = ESP32S3_SPI_W0_OFFS;
+				usrOffs = ESP32S3_SPI_USR_OFFS;
+				usr2Offs = ESP32S3_SPI_USR2_OFFS;
+				mosiDlenOffs = ESP32S3_SPI_MOSI_DLEN_OFFS;
+				misoDlenOffs = ESP32S3_SPI_MISO_DLEN_OFFS;
+			}
+			else if (isESP32S3RegFamily())
+			{
+				baseAddr = ESP32S3_SPI_REG_BASE;
+				w0Offs = ESP32S3_SPI_W0_OFFS;
+				usrOffs = ESP32S3_SPI_USR_OFFS;
+				usr2Offs = ESP32S3_SPI_USR2_OFFS;
+				mosiDlenOffs = ESP32S3_SPI_MOSI_DLEN_OFFS;
+				misoDlenOffs = ESP32S3_SPI_MISO_DLEN_OFFS;
+			}
+			else
+			{
+				baseAddr = ESP32_SPI_REG_BASE;
+				w0Offs = ESP32_SPI_W0_OFFS;
+				usrOffs = SPI_USR_OFFS;
+				usr2Offs = SPI_USR2_OFFS;
+				mosiDlenOffs = SPI_MOSI_DLEN_OFFS;
+				misoDlenOffs = SPI_MISO_DLEN_OFFS;
+			}
+			
+			// Set lengths (0 MOSI, readBits MISO)
+			if (bIsESP8266)
+			{
+				// ESP8266 has no MOSI/MISO_DLEN registers.
+				// Bit lengths are set via SPI_USR1: bits[31:26]=MISO, bits[25:17]=MOSI
+				uint usr1 = 0;
+				if (readBits > 0)
+					usr1 |= (uint)((readBits - 1) << 8); // MISO bit length in bits [14:8]
+				// MOSI length = 0 (we're not sending data, just command)
+				WriteReg(baseAddr + ESP8266_SPI_USR1_OFFS, usr1);
+			}
+			else
+			{
+				if(readBits > 0)
+					 WriteReg(baseAddr + misoDlenOffs, (uint)(readBits - 1));
+				else
+					 WriteReg(baseAddr + misoDlenOffs, 0);
+				WriteReg(baseAddr + mosiDlenOffs, 0); // 0 bits MOSI
+			}
 
-            // SPI_USR_REG flags
-            // COMMAND(31) | MISO(28) if read | MOSI(27) if write
-            uint usrFlags = (1u << 31); // COMMAND
-            if(readBits > 0) usrFlags |= (1u << 28); // MISO
-            
-            WriteReg(baseAddr + usrOffs, usrFlags);
+			// SPI_USR_REG flags
+			// COMMAND(31) | MISO(28) if read | MOSI(27) if write
+			uint usrFlags = (1u << 31); // COMMAND
+			if(readBits > 0) usrFlags |= (1u << 28); // MISO
+			
+			WriteReg(baseAddr + usrOffs, usrFlags);
 
-            // SPI_USR2_REG: (7 << 28) | cmd
-            uint usr2 = (7u << 28) | cmd;
-            WriteReg(baseAddr + usr2Offs, usr2);
+			// SPI_USR2_REG: (7 << 28) | cmd
+			uint usr2 = (7u << 28) | cmd;
+			WriteReg(baseAddr + usr2Offs, usr2);
 
-            // Execute: SPI_CMD_REG (offset 0) bit 18 (USR)
-            WriteReg(baseAddr, (1u << 18));
+			// Execute: SPI_CMD_REG (offset 0) bit 18 (USR)
+			WriteReg(baseAddr, (1u << 18));
 
-            // Wait for completion (poll bit 18 of SPI_CMD_REG)
-            int timeout = 50;
-            for(int i = 0; i < timeout; i++)
-            {
-                uint val = ReadReg(baseAddr);
-                if ((val & (1u << 18)) == 0) break;
-                Thread.Sleep(1);
-            }
+			// Wait for completion (poll bit 18 of SPI_CMD_REG)
+			int timeout = 50;
+			for(int i = 0; i < timeout; i++)
+			{
+				uint val = ReadReg(baseAddr);
+				if ((val & (1u << 18)) == 0) break;
+				Thread.Sleep(1);
+			}
 
-            // Read result from W0
-            if(readBits > 0)
-            {
-                uint w0 = ReadReg(baseAddr + w0Offs);
-                return w0;
-            }
-            return 0;
-        }
+			// Read result from W0
+			if(readBits > 0)
+			{
+				uint w0 = ReadReg(baseAddr + w0Offs);
+				return w0;
+			}
+			return 0;
+		}
 
-        public uint? ReadFlashId()
-        {
-            try
-            {
+		public uint? ReadFlashId()
+		{
+			try
+			{
 
-                // CMD 0x9F (RDID), read 24 bits
-                uint fid = RunSpiFlashCmd(0x9F, 24);
+				// CMD 0x9F (RDID), read 24 bits
+				uint fid = RunSpiFlashCmd(0x9F, 24);
 
-                
-                // Decode size roughly
-                // 0x16 = 22 -> 4MB
-                uint sizeCode = (fid >> 16) & 0xFF;
-                if(sizeCode > 0 && sizeCode <= 31)
-                {
-                    long size = 1L << (int)sizeCode;
+				
+				// Decode size roughly
+				// 0x16 = 22 -> 4MB
+				uint sizeCode = (fid >> 16) & 0xFF;
+				if(sizeCode > 0 && sizeCode <= 31)
+				{
+					long size = 1L << (int)sizeCode;
 					SPIFlashInfo info = SPIFlashInfoList.Singleton.findFlashForMID((int)(fid & 0xFFFFFF));
 					addSuccess(FormatFlashInfo((int)(fid & 0xFFFFFF), info?.manufacturer ?? "unknown", size, info?.icName) + Environment.NewLine);
-                }
-                else
-                {
-                    addLogLine($"Unknown Flash Size Code: {sizeCode:X}");
-                }
-                
-                return fid;
-            }
-            catch(Exception ex)
-            {
-                addErrorLine("Failed to read Flash ID: " + ex.Message);
-            }
-            return null;
-        }
+				}
+				else
+				{
+					addLogLine($"Unknown Flash Size Code: {sizeCode:X}");
+				}
+				
+				return fid;
+			}
+			catch(Exception ex)
+			{
+				addErrorLine("Failed to read Flash ID: " + ex.Message);
+			}
+			return null;
+		}
 
-        public byte[] ReadFlashBlockSlow(uint addr, uint size)
-        {
-            // esptool: read_flash_slow reads in 64-byte blocks (ROM limit)
-            // Each command returns resp_data_len=64 bytes
-            const int BLOCK_LEN = 64;
-            
-            List<byte> result = new List<byte>();
-            while (result.Count < (int)size)
-            {
-                int blockLen = Math.Min(BLOCK_LEN, (int)size - result.Count);
-                byte[] payload = new byte[8];
-                Array.Copy(BitConverter.GetBytes(addr + (uint)result.Count), 0, payload, 0, 4);
-                Array.Copy(BitConverter.GetBytes((uint)blockLen), 0, payload, 4, 4);
+		public byte[] ReadFlashBlockSlow(uint addr, uint size)
+		{
+			// esptool: read_flash_slow reads in 64-byte blocks (ROM limit)
+			// Each command returns resp_data_len=64 bytes
+			const int BLOCK_LEN = 64;
+			
+			List<byte> result = new List<byte>();
+			while (result.Count < (int)size)
+			{
+				int blockLen = Math.Min(BLOCK_LEN, (int)size - result.Count);
+				byte[] payload = new byte[8];
+				Array.Copy(BitConverter.GetBytes(addr + (uint)result.Count), 0, payload, 0, 4);
+				Array.Copy(BitConverter.GetBytes((uint)blockLen), 0, payload, 4, 4);
 
-                sendCommand(ESPCommand.READ_FLASH_SLOW, payload);
-                // resp_data_len = BLOCK_LEN (ROM always returns 64 bytes)
-                var resp = readPacket(3000, ESPCommand.READ_FLASH_SLOW, BLOCK_LEN);
-                if (resp == null || resp.Length < blockLen)
-                {
-                    addErrorLine($"ReadFlashBlockSlow: failed to read block at 0x{addr + (uint)result.Count:X}");
-                    return null;
-                }
-                // ROM returns full 64-byte buffer, take only blockLen bytes
-                byte[] block = new byte[blockLen];
-                Array.Copy(resp, 0, block, 0, blockLen);
-                result.AddRange(block);
-            }
-            return result.ToArray();
-        }
+				sendCommand(ESPCommand.READ_FLASH_SLOW, payload);
+				// resp_data_len = BLOCK_LEN (ROM always returns 64 bytes)
+				var resp = readPacket(3000, ESPCommand.READ_FLASH_SLOW, BLOCK_LEN);
+				if (resp == null || resp.Length < blockLen)
+				{
+					addErrorLine($"ReadFlashBlockSlow: failed to read block at 0x{addr + (uint)result.Count:X}");
+					return null;
+				}
+				// ROM returns full 64-byte buffer, take only blockLen bytes
+				byte[] block = new byte[blockLen];
+				Array.Copy(resp, 0, block, 0, blockLen);
+				result.AddRange(block);
+			}
+			return result.ToArray();
+		}
 
-        bool MemBegin(uint size, uint blocks, uint blockSize, uint offset)
-        {
-            // esptool: struct.pack("<IIII", size, blocks, blocksize, offset)
-            List<byte> payload = new List<byte>();
-            payload.AddRange(BitConverter.GetBytes(size));
-            payload.AddRange(BitConverter.GetBytes(blocks));
-            payload.AddRange(BitConverter.GetBytes(blockSize));
-            payload.AddRange(BitConverter.GetBytes(offset));
+		bool MemBegin(uint size, uint blocks, uint blockSize, uint offset)
+		{
+			// esptool: struct.pack("<IIII", size, blocks, blocksize, offset)
+			List<byte> payload = new List<byte>();
+			payload.AddRange(BitConverter.GetBytes(size));
+			payload.AddRange(BitConverter.GetBytes(blocks));
+			payload.AddRange(BitConverter.GetBytes(blockSize));
+			payload.AddRange(BitConverter.GetBytes(offset));
 
-            sendCommand(ESPCommand.MEM_BEGIN, payload.ToArray());
-            var resp = readPacket(5000, ESPCommand.MEM_BEGIN);
-            return resp != null;
-        }
+			sendCommand(ESPCommand.MEM_BEGIN, payload.ToArray());
+			var resp = readPacket(5000, ESPCommand.MEM_BEGIN);
+			return resp != null;
+		}
 
-        bool MemData(byte[] data, uint seq)
-        {
-            // esptool: struct.pack("<IIII", len(data), seq, 0, 0) + data
-            List<byte> payload = new List<byte>();
-            payload.AddRange(BitConverter.GetBytes((uint)data.Length));
-            payload.AddRange(BitConverter.GetBytes(seq));
-            payload.AddRange(BitConverter.GetBytes((uint)0)); // reserved
-            payload.AddRange(BitConverter.GetBytes((uint)0)); // reserved
-            payload.AddRange(data);
+		bool MemData(byte[] data, uint seq)
+		{
+			// esptool: struct.pack("<IIII", len(data), seq, 0, 0) + data
+			List<byte> payload = new List<byte>();
+			payload.AddRange(BitConverter.GetBytes((uint)data.Length));
+			payload.AddRange(BitConverter.GetBytes(seq));
+			payload.AddRange(BitConverter.GetBytes((uint)0)); // reserved
+			payload.AddRange(BitConverter.GetBytes((uint)0)); // reserved
+			payload.AddRange(data);
 
-            // esptool: self.checksum(data) - XOR all data bytes starting from 0xEF
-            byte checksum = 0xEF;
-            foreach (byte b in data) checksum ^= b;
+			// esptool: self.checksum(data) - XOR all data bytes starting from 0xEF
+			byte checksum = 0xEF;
+			foreach (byte b in data) checksum ^= b;
 
-            sendCommand(ESPCommand.MEM_DATA, payload.ToArray(), checksum);
-            var resp = readPacket(5000, ESPCommand.MEM_DATA);
-            return resp != null;
-        }
+			sendCommand(ESPCommand.MEM_DATA, payload.ToArray(), checksum);
+			var resp = readPacket(5000, ESPCommand.MEM_DATA);
+			return resp != null;
+		}
 
-        bool MemEnd(uint entryPoint)
-        {
-            List<byte> payload = new List<byte>();
-            payload.AddRange(BitConverter.GetBytes((uint)(entryPoint == 0 ? 1 : 0))); // no_entry
-            payload.AddRange(BitConverter.GetBytes(entryPoint));
+		bool MemEnd(uint entryPoint)
+		{
+			List<byte> payload = new List<byte>();
+			payload.AddRange(BitConverter.GetBytes((uint)(entryPoint == 0 ? 1 : 0))); // no_entry
+			payload.AddRange(BitConverter.GetBytes(entryPoint));
 
-            sendCommand(ESPCommand.MEM_END, payload.ToArray());
-            var resp = readPacket(3000, ESPCommand.MEM_END);
-            return resp != null;
-        }
+			sendCommand(ESPCommand.MEM_END, payload.ToArray());
+			var resp = readPacket(3000, ESPCommand.MEM_END);
+			return resp != null;
+		}
 
-        public bool UploadStub()
-        {
-            if (LegacyMode)
-            {
-                addLogLine("Legacy mode enabled, skipping stub upload.");
-                return false;
-            }
+		public bool UploadStub()
+		{
+			if (LegacyMode)
+			{
+				addLogLine("Legacy mode enabled, skipping stub upload.");
+				return false;
+			}
 
-            logger.setState("Uploading stub...", Color.LightBlue);
+			logger.setState("Uploading stub...", Color.LightBlue);
 			addLogLine("Loading stub...");
-            try
-            {
-                // Load chip-specific stub from embedded resource
-                string stubName = GetStubNameForSelectedChip();
-                string jsonContent = FLoaders.GetStringFromAssembly(stubName);
+			try
+			{
+				// Load chip-specific stub from embedded resource
+				string stubName = GetStubNameForSelectedChip();
+				string jsonContent = FLoaders.GetStringFromAssembly(stubName);
 				Debug.WriteLine($"Loaded stub: {stubName}");
-                
-                // Simple JSON parsing for our known fields
-                string textB64 = ExtractJsonString(jsonContent, "text");
-                string dataB64 = ExtractJsonString(jsonContent, "data");
-                uint textStart = ExtractJsonUint(jsonContent, "text_start");
-                uint dataStart = ExtractJsonUint(jsonContent, "data_start");
-                uint entry = ExtractJsonUint(jsonContent, "entry");
-                
-                byte[] text = Convert.FromBase64String(textB64);
-                byte[] data = Convert.FromBase64String(dataB64);
+				
+				// Simple JSON parsing for our known fields
+				string textB64 = ExtractJsonString(jsonContent, "text");
+				string dataB64 = ExtractJsonString(jsonContent, "data");
+				uint textStart = ExtractJsonUint(jsonContent, "text_start");
+				uint dataStart = ExtractJsonUint(jsonContent, "data_start");
+				uint entry = ExtractJsonUint(jsonContent, "entry");
+				
+				byte[] text = Convert.FromBase64String(textB64);
+				byte[] data = Convert.FromBase64String(dataB64);
 
-                int totalStubBytes = text.Length + data.Length;
+				int totalStubBytes = text.Length + data.Length;
 				Debug.WriteLine($"Stub text: {text.Length} bytes @0x{textStart:X}, data: {data.Length} bytes @0x{dataStart:X}, entry: 0x{entry:X}");
 
-                int stubBytesSent = 0;
+				int stubBytesSent = 0;
 
-                // Upload text (IRAM)
-                logger.setState("Uploading stub text...", Color.LightBlue);
-                uint blocks = (uint)((text.Length + ESP_RAM_BLOCK - 1) / ESP_RAM_BLOCK);
-                if (!MemBegin((uint)text.Length, blocks, (uint)ESP_RAM_BLOCK, textStart))
-                {
-                    addErrorLine("Failed to MEM_BEGIN for text");
-                    return false;
-                }
-                for (uint i = 0; i < blocks; i++)
-                {
-                    int len = Math.Min(ESP_RAM_BLOCK, text.Length - (int)(i * ESP_RAM_BLOCK));
-                    byte[] block = new byte[len];
-                    Array.Copy(text, i * ESP_RAM_BLOCK, block, 0, len);
-                    if (!MemData(block, i))
-                    {
-                        addErrorLine($"Failed to MEM_DATA text block {i}/{blocks}");
-                        return false;
-                    }
-                    stubBytesSent += len;
-                    logger.setProgress(stubBytesSent, totalStubBytes);
-                }
+				// Upload text (IRAM)
+				logger.setState("Uploading stub text...", Color.LightBlue);
+				uint blocks = (uint)((text.Length + ESP_RAM_BLOCK - 1) / ESP_RAM_BLOCK);
+				if (!MemBegin((uint)text.Length, blocks, (uint)ESP_RAM_BLOCK, textStart))
+				{
+					addErrorLine("Failed to MEM_BEGIN for text");
+					return false;
+				}
+				for (uint i = 0; i < blocks; i++)
+				{
+					int len = Math.Min(ESP_RAM_BLOCK, text.Length - (int)(i * ESP_RAM_BLOCK));
+					byte[] block = new byte[len];
+					Array.Copy(text, i * ESP_RAM_BLOCK, block, 0, len);
+					if (!MemData(block, i))
+					{
+						addErrorLine($"Failed to MEM_DATA text block {i}/{blocks}");
+						return false;
+					}
+					stubBytesSent += len;
+					logger.setProgress(stubBytesSent, totalStubBytes);
+				}
 				Debug.WriteLine($"Stub text uploaded ({blocks} blocks).");
 
-                // Upload data (DRAM)
-                logger.setState("Uploading stub data...", Color.LightBlue);
-                blocks = (uint)((data.Length + ESP_RAM_BLOCK - 1) / ESP_RAM_BLOCK);
-                if (!MemBegin((uint)data.Length, blocks, (uint)ESP_RAM_BLOCK, dataStart))
-                {
-                    addErrorLine("Failed to MEM_BEGIN for data");
-                    return false;
-                }
-                for (uint i = 0; i < blocks; i++)
-                {
-                    int len = Math.Min(ESP_RAM_BLOCK, data.Length - (int)(i * ESP_RAM_BLOCK));
-                    byte[] block = new byte[len];
-                    Array.Copy(data, i * ESP_RAM_BLOCK, block, 0, len);
-                    if (!MemData(block, i))
-                    {
-                        addErrorLine($"Failed to MEM_DATA data block {i}/{blocks}");
-                        return false;
-                    }
-                    stubBytesSent += len;
-                    logger.setProgress(stubBytesSent, totalStubBytes);
-                }
+				// Upload data (DRAM)
+				logger.setState("Uploading stub data...", Color.LightBlue);
+				blocks = (uint)((data.Length + ESP_RAM_BLOCK - 1) / ESP_RAM_BLOCK);
+				if (!MemBegin((uint)data.Length, blocks, (uint)ESP_RAM_BLOCK, dataStart))
+				{
+					addErrorLine("Failed to MEM_BEGIN for data");
+					return false;
+				}
+				for (uint i = 0; i < blocks; i++)
+				{
+					int len = Math.Min(ESP_RAM_BLOCK, data.Length - (int)(i * ESP_RAM_BLOCK));
+					byte[] block = new byte[len];
+					Array.Copy(data, i * ESP_RAM_BLOCK, block, 0, len);
+					if (!MemData(block, i))
+					{
+						addErrorLine($"Failed to MEM_DATA data block {i}/{blocks}");
+						return false;
+					}
+					stubBytesSent += len;
+					logger.setProgress(stubBytesSent, totalStubBytes);
+				}
 				Debug.WriteLine($"Stub data uploaded ({blocks} blocks).");
 
-                // Execute stub
-                logger.setState("Starting stub...", Color.LightBlue);
+				// Execute stub
+				logger.setState("Starting stub...", Color.LightBlue);
 				Debug.WriteLine("Running stub entry point...");
-                MemEnd(entry);
+				MemEnd(entry);
 
-                // Wait for OHAI
+				// Wait for OHAI
 				Debug.WriteLine("Waiting for stub handshake (OHAI)...");
-                if (!CheckForOHAI(5000))
-                {
-                    addErrorLine("Stub did not respond with OHAI.");
-                    return false;
-                }
+				if (!CheckForOHAI(5000))
+				{
+					addErrorLine("Stub did not respond with OHAI.");
+					return false;
+				}
 
-                isStub = true;
-                addSuccess("Stub flasher running!" + Environment.NewLine);
-                logger.setProgress(0, 1); // Reset progress bar
-                return true;
-            }
-            catch (Exception ex)
-            {
-                addErrorLine("Stub upload failed: " + ex.Message);
-                return false;
-            }
-        }
+				isStub = true;
+				addSuccess("Stub flasher running!" + Environment.NewLine);
+				logger.setProgress(0, 1); // Reset progress bar
+				return true;
+			}
+			catch (Exception ex)
+			{
+				addErrorLine("Stub upload failed: " + ex.Message);
+				return false;
+			}
+		}
 
-        static string ExtractJsonString(string json, string key)
-        {
-            // Find "key": "value" pattern
-            string search = "\"" + key + "\": \"";
-            int idx = json.IndexOf(search);
-            if (idx < 0) { search = "\"" + key + "\":\""; idx = json.IndexOf(search); }
-            if (idx < 0) throw new Exception($"JSON key '{key}' not found");
-            int start = idx + search.Length;
-            int end = json.IndexOf("\"", start);
-            return json.Substring(start, end - start);
-        }
+		static string ExtractJsonString(string json, string key)
+		{
+			// Find "key": "value" pattern
+			string search = "\"" + key + "\": \"";
+			int idx = json.IndexOf(search);
+			if (idx < 0) { search = "\"" + key + "\":\""; idx = json.IndexOf(search); }
+			if (idx < 0) throw new Exception($"JSON key '{key}' not found");
+			int start = idx + search.Length;
+			int end = json.IndexOf("\"", start);
+			return json.Substring(start, end - start);
+		}
 
-        static uint ExtractJsonUint(string json, string key)
-        {
-            // Find "key": number pattern
-            string search = "\"" + key + "\": ";
-            int idx = json.IndexOf(search);
-            if (idx < 0) { search = "\"" + key + "\":"; idx = json.IndexOf(search); }
-            if (idx < 0) throw new Exception($"JSON key '{key}' not found");
-            int start = idx + search.Length;
-            int end = start;
-            while (end < json.Length && (char.IsDigit(json[end]) || json[end] == '-')) end++;
-            return uint.Parse(json.Substring(start, end - start));
-        }
+		static uint ExtractJsonUint(string json, string key)
+		{
+			// Find "key": number pattern
+			string search = "\"" + key + "\": ";
+			int idx = json.IndexOf(search);
+			if (idx < 0) { search = "\"" + key + "\":"; idx = json.IndexOf(search); }
+			if (idx < 0) throw new Exception($"JSON key '{key}' not found");
+			int start = idx + search.Length;
+			int end = start;
+			while (end < json.Length && (char.IsDigit(json[end]) || json[end] == '-')) end++;
+			return uint.Parse(json.Substring(start, end - start));
+		}
 
-        bool CheckForOHAI(int timeout)
-        {
-             // After mem_finish, stub sends a raw SLIP packet containing "OHAI"
-             // This is NOT a command response, just raw bytes
-             serial.ReadTimeout = timeout;
-             List<byte> buffer = new List<byte>();
-             long start = DateTime.Now.Ticks;
-             // Console.WriteLine($"[DEBUG] CheckForOHAI: waiting {timeout}ms...");
-             
-             while((DateTime.Now.Ticks - start) / 10000 < timeout)
-             {
-                 try {
-                     int b = serial.ReadByte();
-                     if(b != -1) {
-                         buffer.Add((byte)b);
-                         // Console.Write($"{(byte)b:X2} ");
-                     }
-                     
-                     // Check for OHAI
-                     if(buffer.Count >= 6)
-                     {
-                         // Check from end
-                         int n = buffer.Count;
-                         if(buffer[n-1] == 0xC0 && buffer[n-2] == 0x49 && buffer[n-3] == 0x41 && buffer[n-4] == 0x48 && buffer[n-5] == 0x4F && buffer[n-6] == 0xC0)
-                         {
-                             // Console.WriteLine();
-                             // Console.WriteLine("[DEBUG] CheckForOHAI: Got OHAI!");
-                             return true;
-                         }
-                     }
-                 } catch { }
-             }
-             // Console.WriteLine();
-             // Console.WriteLine($"[DEBUG] CheckForOHAI: timeout. Received {buffer.Count} bytes: {BitConverter.ToString(buffer.ToArray())}");
-             return false;
-        }
+		bool CheckForOHAI(int timeout)
+		{
+			 // After mem_finish, stub sends a raw SLIP packet containing "OHAI"
+			 // This is NOT a command response, just raw bytes
+			 serial.ReadTimeout = timeout;
+			 List<byte> buffer = new List<byte>();
+			 long start = DateTime.Now.Ticks;
+			 // Console.WriteLine($"[DEBUG] CheckForOHAI: waiting {timeout}ms...");
+			 
+			 while((DateTime.Now.Ticks - start) / 10000 < timeout)
+			 {
+				 try {
+					 int b = serial.ReadByte();
+					 if(b != -1) {
+						 buffer.Add((byte)b);
+						 // Console.Write($"{(byte)b:X2} ");
+					 }
+					 
+					 // Check for OHAI
+					 if(buffer.Count >= 6)
+					 {
+						 // Check from end
+						 int n = buffer.Count;
+						 if(buffer[n-1] == 0xC0 && buffer[n-2] == 0x49 && buffer[n-3] == 0x41 && buffer[n-4] == 0x48 && buffer[n-5] == 0x4F && buffer[n-6] == 0xC0)
+						 {
+							 // Console.WriteLine();
+							 // Console.WriteLine("[DEBUG] CheckForOHAI: Got OHAI!");
+							 return true;
+						 }
+					 }
+				 } catch { }
+			 }
+			 // Console.WriteLine();
+			 // Console.WriteLine($"[DEBUG] CheckForOHAI: timeout. Received {buffer.Count} bytes: {BitConverter.ToString(buffer.ToArray())}");
+			 return false;
+		}
 
-        public byte[] ReadFlashFast(uint addr, uint size, Action<int, int> progress = null)
-        {
-            // READ_FLASH (0xD2) payload: offset(4) + length(4) + sector_size(4) + block_size(4)
-            // esptool code: struct.pack("<IIII", offset, length, self.FLASH_SECTOR_SIZE, 64)
-            
-            uint sectorSize = 0x1000;
-            uint packetSize = 64;
-            
-            List<byte> payload = new List<byte>();
-            payload.AddRange(BitConverter.GetBytes(addr));
-            payload.AddRange(BitConverter.GetBytes(size));
-            payload.AddRange(BitConverter.GetBytes(sectorSize));
-            payload.AddRange(BitConverter.GetBytes(packetSize));
-            
-            sendCommand(ESPCommand.READ_FLASH, payload.ToArray());
-            
-            // esptool: check_command waits for ACK response first
-            var cmdResp = readPacket(3000, ESPCommand.READ_FLASH);
-            if (cmdResp == null) throw new Exception("READ_FLASH command failed (no ACK)");
-            
-            // Pre-allocate the full result buffer - zero copy path
-            byte[] dataBytes = new byte[size];
-            byte[] ackBuf = new byte[4];
-            uint received = 0;
-            uint lastProgress = 0;
-            
-            while(received < size)
-            {
-                 int got = readRawPacketInto(dataBytes, (int)received, 3000);
-                 if(got <= 0) throw new Exception("Timeout reading fast flash data");
-                 
-                 received += (uint)got;
-                 
-                 // Stub expects ACK: 4 bytes (bytes_received) as SLIP packet
-                 ackBuf[0] = (byte)(received);
-                 ackBuf[1] = (byte)(received >> 8);
-                 ackBuf[2] = (byte)(received >> 16);
-                 ackBuf[3] = (byte)(received >> 24);
-                 sendRawSlip(ackBuf);
-                 
-                 // Batch progress to every 4KB to reduce callback overhead
-                 if(progress != null && (received - lastProgress >= 4096 || received >= size))
-                 {
-                     progress((int)received, (int)size);
-                     lastProgress = received;
-                 }
-            }
-            
-            // After data, read MD5 (16 bytes)
+		public byte[] ReadFlashFast(uint addr, uint size, Action<int, int> progress = null)
+		{
+			// READ_FLASH (0xD2) payload: offset(4) + length(4) + sector_size(4) + block_size(4)
+			// esptool code: struct.pack("<IIII", offset, length, self.FLASH_SECTOR_SIZE, 64)
+			
+			uint sectorSize = 0x1000;
+			uint packetSize = 64;
+			
+			List<byte> payload = new List<byte>();
+			payload.AddRange(BitConverter.GetBytes(addr));
+			payload.AddRange(BitConverter.GetBytes(size));
+			payload.AddRange(BitConverter.GetBytes(sectorSize));
+			payload.AddRange(BitConverter.GetBytes(packetSize));
+			
+			sendCommand(ESPCommand.READ_FLASH, payload.ToArray());
+			
+			// esptool: check_command waits for ACK response first
+			var cmdResp = readPacket(3000, ESPCommand.READ_FLASH);
+			if (cmdResp == null) throw new Exception("READ_FLASH command failed (no ACK)");
+			
+			// Pre-allocate the full result buffer - zero copy path
+			byte[] dataBytes = new byte[size];
+			byte[] ackBuf = new byte[4];
+			uint received = 0;
+			uint lastProgress = 0;
+			
+			while(received < size)
+			{
+				 int got = readRawPacketInto(dataBytes, (int)received, 3000);
+				 if(got <= 0) throw new Exception("Timeout reading fast flash data");
+				 
+				 received += (uint)got;
+				 
+				 // Stub expects ACK: 4 bytes (bytes_received) as SLIP packet
+				 ackBuf[0] = (byte)(received);
+				 ackBuf[1] = (byte)(received >> 8);
+				 ackBuf[2] = (byte)(received >> 16);
+				 ackBuf[3] = (byte)(received >> 24);
+				 sendRawSlip(ackBuf);
+				 
+				 // Batch progress to every 4KB to reduce callback overhead
+				 if(progress != null && (received - lastProgress >= 4096 || received >= size))
+				 {
+					 progress((int)received, (int)size);
+					 lastProgress = received;
+				 }
+			}
+			
+			// After data, read MD5 (16 bytes)
 			FinishOperationProgress();
 			addLogLine("Verification: target and host MD5.");
-            byte[] digest = readRawPacket(3000);
-            if(digest == null || digest.Length != 16) throw new Exception("Failed to read MD5 digest");
-            
-            using(var md5 = MD5.Create())
-            {
-                byte[] calc = md5.ComputeHash(dataBytes);
-                for(int i=0; i<16; i++)
-                {
-                    if(calc[i] != digest[i])
-                    {
-                         throw new Exception($"MD5 mismatch! Expected {BitConverter.ToString(digest)}, Calc {BitConverter.ToString(calc)}");
-                    }
-                }
-            }
-            
+			byte[] digest = readRawPacket(3000);
+			if(digest == null || digest.Length != 16) throw new Exception("Failed to read MD5 digest");
+			
+			using(var md5 = MD5.Create())
+			{
+				byte[] calc = md5.ComputeHash(dataBytes);
+				for(int i=0; i<16; i++)
+				{
+					if(calc[i] != digest[i])
+					{
+						 throw new Exception($"MD5 mismatch! Expected {BitConverter.ToString(digest)}, Calc {BitConverter.ToString(calc)}");
+					}
+				}
+			}
+			
 			addSuccess("MD5 verification passed." + Environment.NewLine);
-            return dataBytes;
-        }
+			return dataBytes;
+		}
 
-        void sendRawSlip(byte[] data)
-        {
-             int pos = 0;
-             _slipBuf[pos++] = SLIP_END;
-             foreach (byte b in data)
-             {
-                 if (b == SLIP_END)
-                 {
-                     _slipBuf[pos++] = SLIP_ESC;
-                     _slipBuf[pos++] = SLIP_ESC_END;
-                 }
-                 else if (b == SLIP_ESC)
-                 {
-                     _slipBuf[pos++] = SLIP_ESC;
-                     _slipBuf[pos++] = SLIP_ESC_ESC;
-                 }
-                 else
-                 {
-                     _slipBuf[pos++] = b;
-                 }
-             }
-             _slipBuf[pos++] = SLIP_END;
-             serial.Write(_slipBuf, 0, pos);
-        }
+		void sendRawSlip(byte[] data)
+		{
+			 int pos = 0;
+			 _slipBuf[pos++] = SLIP_END;
+			 foreach (byte b in data)
+			 {
+				 if (b == SLIP_END)
+				 {
+					 _slipBuf[pos++] = SLIP_ESC;
+					 _slipBuf[pos++] = SLIP_ESC_END;
+				 }
+				 else if (b == SLIP_ESC)
+				 {
+					 _slipBuf[pos++] = SLIP_ESC;
+					 _slipBuf[pos++] = SLIP_ESC_ESC;
+				 }
+				 else
+				 {
+					 _slipBuf[pos++] = b;
+				 }
+			 }
+			 _slipBuf[pos++] = SLIP_END;
+			 serial.Write(_slipBuf, 0, pos);
+		}
 
-        // Zero-copy overload: writes SLIP-decoded data directly into dest at destOffset.
-        // Returns number of bytes written, or -1 on timeout.
-        int readRawPacketInto(byte[] dest, int destOffset, int timeoutMs)
-        {
-             serial.ReadTimeout = timeoutMs;
-             bool inPacket = false;
-             bool escape = false;
-             int written = 0;
+		// Zero-copy overload: writes SLIP-decoded data directly into dest at destOffset.
+		// Returns number of bytes written, or -1 on timeout.
+		int readRawPacketInto(byte[] dest, int destOffset, int timeoutMs)
+		{
+			 serial.ReadTimeout = timeoutMs;
+			 bool inPacket = false;
+			 bool escape = false;
+			 int written = 0;
 
-             while(true)
-             {
-                 try {
-                     int waiting = serial.BytesToRead;
-                     int toRead = waiting > 0 ? Math.Min(waiting, _slipBuf.Length) : 1;
-                     int count = serial.Read(_slipBuf, 0, toRead);
-                     if (count <= 0) break;
+			 while(true)
+			 {
+				 try {
+					 int waiting = serial.BytesToRead;
+					 int toRead = waiting > 0 ? Math.Min(waiting, _slipBuf.Length) : 1;
+					 int count = serial.Read(_slipBuf, 0, toRead);
+					 if (count <= 0) break;
 
-                     for (int i = 0; i < count; i++)
-                     {
-                         byte b = _slipBuf[i];
-                         if (b == SLIP_END) {
-                             if (inPacket && written > 0) return written;
-                             inPacket = true;
-                             written = 0;
-                         } else if (inPacket) {
-                             if (b == SLIP_ESC) escape = true;
-                             else {
-                                 byte decoded = b;
-                                 if (escape) {
-                                     if (b == SLIP_ESC_END) decoded = SLIP_END;
-                                     else if (b == SLIP_ESC_ESC) decoded = SLIP_ESC;
-                                     escape = false;
-                                 }
-                                 dest[destOffset + written] = decoded;
-                                 written++;
-                             }
-                         }
-                     }
-                 } catch(TimeoutException) { return -1; }
-             }
-             return -1;
-        }
+					 for (int i = 0; i < count; i++)
+					 {
+						 byte b = _slipBuf[i];
+						 if (b == SLIP_END) {
+							 if (inPacket && written > 0) return written;
+							 inPacket = true;
+							 written = 0;
+						 } else if (inPacket) {
+							 if (b == SLIP_ESC) escape = true;
+							 else {
+								 byte decoded = b;
+								 if (escape) {
+									 if (b == SLIP_ESC_END) decoded = SLIP_END;
+									 else if (b == SLIP_ESC_ESC) decoded = SLIP_ESC;
+									 escape = false;
+								 }
+								 dest[destOffset + written] = decoded;
+								 written++;
+							 }
+						 }
+					 }
+				 } catch(TimeoutException) { return -1; }
+			 }
+			 return -1;
+		}
 
-        byte[] readRawPacket(int timeoutMs)
-        {
-             List<byte> payload = new List<byte>();
-             serial.ReadTimeout = timeoutMs;
-             bool inPacket = false;
-             bool escape = false;
+		byte[] readRawPacket(int timeoutMs)
+		{
+			 List<byte> payload = new List<byte>();
+			 serial.ReadTimeout = timeoutMs;
+			 bool inPacket = false;
+			 bool escape = false;
 
-             while(true)
-             {
-                 try {
-                     int waiting = serial.BytesToRead;
-                     int toRead = waiting > 0 ? Math.Min(waiting, _slipBuf.Length) : 1;
-                     int count = serial.Read(_slipBuf, 0, toRead);
-                     if (count <= 0) break;
+			 while(true)
+			 {
+				 try {
+					 int waiting = serial.BytesToRead;
+					 int toRead = waiting > 0 ? Math.Min(waiting, _slipBuf.Length) : 1;
+					 int count = serial.Read(_slipBuf, 0, toRead);
+					 if (count <= 0) break;
 
-                     for (int i = 0; i < count; i++)
-                     {
-                         byte b = _slipBuf[i];
-                         if (b == SLIP_END) {
-                             if (inPacket && payload.Count > 0) return payload.ToArray();
-                             inPacket = true;
-                             payload.Clear();
-                         } else if (inPacket) {
-                             if (b == SLIP_ESC) escape = true;
-                             else {
-                                 if (escape) {
-                                     if (b == SLIP_ESC_END) payload.Add(SLIP_END);
-                                     else if (b == SLIP_ESC_ESC) payload.Add(SLIP_ESC);
-                                     escape = false;
-                                 } else payload.Add(b);
-                             }
-                         }
-                     }
-                 } catch(TimeoutException) { break; }
-             }
-             return null;
-        }
+					 for (int i = 0; i < count; i++)
+					 {
+						 byte b = _slipBuf[i];
+						 if (b == SLIP_END) {
+							 if (inPacket && payload.Count > 0) return payload.ToArray();
+							 inPacket = true;
+							 payload.Clear();
+						 } else if (inPacket) {
+							 if (b == SLIP_ESC) escape = true;
+							 else {
+								 if (escape) {
+									 if (b == SLIP_ESC_END) payload.Add(SLIP_END);
+									 else if (b == SLIP_ESC_ESC) payload.Add(SLIP_ESC);
+									 escape = false;
+								 } else payload.Add(b);
+							 }
+						 }
+					 }
+				 } catch(TimeoutException) { break; }
+			 }
+			 return null;
+		}
 
-        public string FlashMd5Sum(uint addr, uint size)
-        {
-             try
-             {
-                 // esptool: struct.pack("<IIII", addr, size, 0, 0)
-                 List<byte> payload = new List<byte>();
-                 payload.AddRange(BitConverter.GetBytes(addr));
-                 payload.AddRange(BitConverter.GetBytes(size));
-                 payload.AddRange(BitConverter.GetBytes((uint)0));
-                 payload.AddRange(BitConverter.GetBytes((uint)0));
-                 
-                 // esptool: timeout = timeout_per_mb(MD5_TIMEOUT_PER_MB, size)
-                 // MD5_TIMEOUT_PER_MB = 8 seconds per MB, minimum 5s
-                 int timeout = Math.Max(5000, (int)(8.0 * size / 1000000.0 * 1000));
-                 
-                 // esptool: resp_data_len = 16 for stub, 32 for ROM
-                 // Stub returns 16 raw MD5 bytes, ROM returns 32 hex chars
-                 int rdl = isStub ? 16 : 32;
+		public string FlashMd5Sum(uint addr, uint size)
+		{
+			 try
+			 {
+				 // esptool: struct.pack("<IIII", addr, size, 0, 0)
+				 List<byte> payload = new List<byte>();
+				 payload.AddRange(BitConverter.GetBytes(addr));
+				 payload.AddRange(BitConverter.GetBytes(size));
+				 payload.AddRange(BitConverter.GetBytes((uint)0));
+				 payload.AddRange(BitConverter.GetBytes((uint)0));
+				 
+				 // esptool: timeout = timeout_per_mb(MD5_TIMEOUT_PER_MB, size)
+				 // MD5_TIMEOUT_PER_MB = 8 seconds per MB, minimum 5s
+				 int timeout = Math.Max(5000, (int)(8.0 * size / 1000000.0 * 1000));
+				 
+				 // esptool: resp_data_len = 16 for stub, 32 for ROM
+				 // Stub returns 16 raw MD5 bytes, ROM returns 32 hex chars
+				 int rdl = isStub ? 16 : 32;
 				Debug.WriteLine($"Requesting MD5 for 0x{addr:X}-0x{addr + size:X} ({size} bytes), timeout={timeout}ms, resp_data_len={rdl}...");
-                 
-                 sendCommand(ESPCommand.SPI_FLASH_MD5, payload.ToArray());
-                 var resp = readPacket(timeout, ESPCommand.SPI_FLASH_MD5, rdl);
-                 if(resp != null)
-                 {
+				 
+				 sendCommand(ESPCommand.SPI_FLASH_MD5, payload.ToArray());
+				 var resp = readPacket(timeout, ESPCommand.SPI_FLASH_MD5, rdl);
+				 if(resp != null)
+				 {
 					Debug.WriteLine($"MD5 response: {resp.Length} bytes");
-                      if (isStub)
-                      {
-                          // Stub: resp is 16 raw bytes, convert to hex string
-                          return BitConverter.ToString(resp).Replace("-","");
-                      }
-                      else
-                      {
-                          // ROM: resp is 32 hex chars as ASCII
-                          return System.Text.Encoding.ASCII.GetString(resp).ToUpper();
-                      }
-                 }
-                 // Diagnostic: try raw read to see if stub sent anything unexpected
-                 addErrorLine($"MD5 command returned no response (timeout after {timeout}ms)");
-                 try
-                 {
-                     serial.ReadTimeout = 500;
-                     int avail = serial.BytesToRead;
-                     addLogLine($"Serial buffer has {avail} bytes after MD5 timeout.");
-                     if (avail > 0)
-                     {
-                         byte[] raw = new byte[Math.Min(avail, 64)];
-                         int read = serial.Read(raw, 0, raw.Length);
-                         addLogLine($"Raw bytes: {BitConverter.ToString(raw, 0, read)}");
-                     }
-                 }
-                 catch { }
-             }
-             catch (Exception ex)
-             {
-                 addErrorLine($"MD5 exception: {ex.Message}");
-             }
-             return null;
-        }
+					  if (isStub)
+					  {
+						  // Stub: resp is 16 raw bytes, convert to hex string
+						  return BitConverter.ToString(resp).Replace("-","");
+					  }
+					  else
+					  {
+						  // ROM: resp is 32 hex chars as ASCII
+						  return System.Text.Encoding.ASCII.GetString(resp).ToUpper();
+					  }
+				 }
+				 // Diagnostic: try raw read to see if stub sent anything unexpected
+				 addErrorLine($"MD5 command returned no response (timeout after {timeout}ms)");
+				 try
+				 {
+					 serial.ReadTimeout = 500;
+					 int avail = serial.BytesToRead;
+					 addLogLine($"Serial buffer has {avail} bytes after MD5 timeout.");
+					 if (avail > 0)
+					 {
+						 byte[] raw = new byte[Math.Min(avail, 64)];
+						 int read = serial.Read(raw, 0, raw.Length);
+						 addLogLine($"Raw bytes: {BitConverter.ToString(raw, 0, read)}");
+					 }
+				 }
+				 catch { }
+			 }
+			 catch (Exception ex)
+			 {
+				 addErrorLine($"MD5 exception: {ex.Message}");
+			 }
+			 return null;
+		}
 
-        public bool EraseFlash()
-        {
-            addLogLine("Erasing entire flash...");
-            sendCommand(ESPCommand.ERASE_FLASH, new byte[0]);
-            // This takes a LONG time. 30s+?
-            var resp = readPacket(60000, ESPCommand.ERASE_FLASH); 
-            if(resp != null) {
-                addLogLine("Erase complete.");
-                return true;
-            }
-            addErrorLine("Erase failed.");
-            return false;
-        }
+		public bool EraseFlash()
+		{
+			addLogLine("Erasing entire flash...");
+			sendCommand(ESPCommand.ERASE_FLASH, new byte[0]);
+			// This takes a LONG time. 30s+?
+			var resp = readPacket(60000, ESPCommand.ERASE_FLASH); 
+			if(resp != null) {
+				addLogLine("Erase complete.");
+				return true;
+			}
+			addErrorLine("Erase failed.");
+			return false;
+		}
 
-        public override bool doErase(int startSector = 0x000, int sectors = 10, bool bAll = false)
-        {
-            if (!Connect())
-            {
-                return false;
-            }
+		public override bool doErase(int startSector = 0x000, int sectors = 10, bool bAll = false)
+		{
+			if (!Connect())
+			{
+				return false;
+			}
 
-            if (!LegacyMode)
-            {
-                UploadStub();
-                if (isStub)
-                {
+			if (!LegacyMode)
+			{
+				UploadStub();
+				if (isStub)
+				{
 					Debug.WriteLine("Re-attaching SPI after stub...");
-                    SpiAttach();
-                    if (baudrate > 115200)
-                    {
+					SpiAttach();
+					if (baudrate > 115200)
+					{
 						Debug.WriteLine($"Changing baud rate to {baudrate}...");
-                        ChangeBaudrate(baudrate);
+						ChangeBaudrate(baudrate);
 						Debug.WriteLine($"Baud rate changed to {baudrate}.");
-                    }
-                }
-            }
+					}
+				}
+			}
 
-            logger.setState("Erasing flash...", Color.LightBlue);
-            bool ok = EraseFlash();
-            logger.setState(ok ? "Erase complete" : "Erase failed", ok ? Color.LightGreen : Color.Red);
-            return ok;
-        }
+			logger.setState("Erasing flash...", Color.LightBlue);
+			bool ok = EraseFlash();
+			logger.setState(ok ? "Erase complete" : "Erase failed", ok ? Color.LightGreen : Color.Red);
+			return ok;
+		}
 
-        public string ReadMac()
-        {
-             try
-             {
-                 byte[] mac;
-                 if (bIsESP8266)
-                 {
-                     // ESP8266: Read MAC from OTP ROM registers
-                     uint mac0 = ReadReg(0x3FF00050);
-                     uint mac1 = ReadReg(0x3FF00054);
-                     uint mac3 = ReadReg(0x3FF0005C);
+		public string ReadMac()
+		{
+			 try
+			 {
+				 byte[] mac;
+				 if (bIsESP8266)
+				 {
+					 // ESP8266: Read MAC from OTP ROM registers
+					 uint mac0 = ReadReg(0x3FF00050);
+					 uint mac1 = ReadReg(0x3FF00054);
+					 uint mac3 = ReadReg(0x3FF0005C);
 
-                     byte oui0, oui1, oui2;
-                     if (mac3 != 0)
-                     {
-                         oui0 = (byte)((mac3 >> 16) & 0xFF);
-                         oui1 = (byte)((mac3 >> 8) & 0xFF);
-                         oui2 = (byte)(mac3 & 0xFF);
-                     }
-                     else if (((mac1 >> 16) & 0xFF) == 0)
-                     {
-                         oui0 = 0x18; oui1 = 0xFE; oui2 = 0x34;
-                     }
-                     else if (((mac1 >> 16) & 0xFF) == 1)
-                     {
-                         oui0 = 0xAC; oui1 = 0xD0; oui2 = 0x74;
-                     }
-                     else
-                     {
-                         oui0 = 0x00; oui1 = 0x00; oui2 = 0x00;
-                         addWarningLine("Unknown ESP8266 OUI");
-                     }
-                     mac = new byte[] { oui0, oui1, oui2,
-                         (byte)((mac1 >> 8) & 0xFF), (byte)(mac1 & 0xFF), (byte)((mac0 >> 24) & 0xFF) };
-                 }
-                   else if (bIsESP32C3 || bIsESP32C2)
-                   {
-                       // ESP32-C2/C3: EFUSE_BASE=0x60008800, MAC_EFUSE_REG=EFUSE_BASE+0x044
-                       if (!TryReadMacFromEfuse(0x60008844, out mac))
-                           throw new Exception("Failed to read C2/C3 eFuse MAC registers.");
-                   }
-                   else if (bIsESP32S3)
-                   {
-                       // ESP32-S3: EFUSE_BASE=0x60007000, MAC_EFUSE_REG=EFUSE_BASE+0x044
-                       if (!TryReadMacFromEfuse(0x60007044, out mac))
-                           throw new Exception("Failed to read S3 eFuse MAC registers.");
-                   }
-                   else if (bIsESP32S2)
-                   {
-                       // ESP32-S2: EFUSE_BASE=0x3F41A000, MAC_EFUSE_REG=EFUSE_BASE+0x044
-                       if (!TryReadMacFromEfuse(0x3F41A044, out mac))
-                           throw new Exception("Failed to read S2 eFuse MAC registers.");
-                   }
-                   else if (bIsESP32C5)
-                   {
-                       // ESP32-C5: EFUSE_BASE=0x600B4800, MAC_EFUSE_REG=EFUSE_BASE+0x044
-                       if (!TryReadMacFromEfuse(0x600B4844, out mac))
-                           throw new Exception("Failed to read C5 eFuse MAC registers.");
-                   }
-                   else if (bIsESP32C6)
-                   {
-                       // ESP32-C6: EFUSE_BASE=0x600B0800, MAC_EFUSE_REG=EFUSE_BASE+0x044
-                       if (!TryReadMacFromEfuse(0x600B0844, out mac))
-                           throw new Exception("Failed to read C6 eFuse MAC registers.");
-                   }
-                   else if (bIsESP32C61)
-                   {
-                       // ESP32-C61: EFUSE_BASE=0x600B4800, MAC_EFUSE_REG=EFUSE_BASE+0x044
-                       if (!TryReadMacFromEfuse(0x600B4844, out mac))
-                           throw new Exception("Failed to read C61 eFuse MAC registers.");
-                   }
-                   else
-                   {
-                      // ESP32: Read from eFuse registers
-                      uint baseAddr = 0x3FF5A000;
-                      uint w1 = ReadReg(baseAddr + 0x04);
-                      uint w2 = ReadReg(baseAddr + 0x08);
+					 byte oui0, oui1, oui2;
+					 if (mac3 != 0)
+					 {
+						 oui0 = (byte)((mac3 >> 16) & 0xFF);
+						 oui1 = (byte)((mac3 >> 8) & 0xFF);
+						 oui2 = (byte)(mac3 & 0xFF);
+					 }
+					 else if (((mac1 >> 16) & 0xFF) == 0)
+					 {
+						 oui0 = 0x18; oui1 = 0xFE; oui2 = 0x34;
+					 }
+					 else if (((mac1 >> 16) & 0xFF) == 1)
+					 {
+						 oui0 = 0xAC; oui1 = 0xD0; oui2 = 0x74;
+					 }
+					 else
+					 {
+						 oui0 = 0x00; oui1 = 0x00; oui2 = 0x00;
+						 addWarningLine("Unknown ESP8266 OUI");
+					 }
+					 mac = new byte[] { oui0, oui1, oui2,
+						 (byte)((mac1 >> 8) & 0xFF), (byte)(mac1 & 0xFF), (byte)((mac0 >> 24) & 0xFF) };
+				 }
+				   else if (bIsESP32C3 || bIsESP32C2)
+				   {
+					   // ESP32-C2/C3: EFUSE_BASE=0x60008800, MAC_EFUSE_REG=EFUSE_BASE+0x044
+					   if (!TryReadMacFromEfuse(0x60008844, out mac))
+						   throw new Exception("Failed to read C2/C3 eFuse MAC registers.");
+				   }
+				   else if (bIsESP32S3)
+				   {
+					   // ESP32-S3: EFUSE_BASE=0x60007000, MAC_EFUSE_REG=EFUSE_BASE+0x044
+					   if (!TryReadMacFromEfuse(0x60007044, out mac))
+						   throw new Exception("Failed to read S3 eFuse MAC registers.");
+				   }
+				   else if (bIsESP32S2)
+				   {
+					   // ESP32-S2: EFUSE_BASE=0x3F41A000, MAC_EFUSE_REG=EFUSE_BASE+0x044
+					   if (!TryReadMacFromEfuse(0x3F41A044, out mac))
+						   throw new Exception("Failed to read S2 eFuse MAC registers.");
+				   }
+				   else if (bIsESP32C5)
+				   {
+					   // ESP32-C5: EFUSE_BASE=0x600B4800, MAC_EFUSE_REG=EFUSE_BASE+0x044
+					   if (!TryReadMacFromEfuse(0x600B4844, out mac))
+						   throw new Exception("Failed to read C5 eFuse MAC registers.");
+				   }
+				   else if (bIsESP32C6)
+				   {
+					   // ESP32-C6: EFUSE_BASE=0x600B0800, MAC_EFUSE_REG=EFUSE_BASE+0x044
+					   if (!TryReadMacFromEfuse(0x600B0844, out mac))
+						   throw new Exception("Failed to read C6 eFuse MAC registers.");
+				   }
+				   else if (bIsESP32C61)
+				   {
+					   // ESP32-C61: EFUSE_BASE=0x600B4800, MAC_EFUSE_REG=EFUSE_BASE+0x044
+					   if (!TryReadMacFromEfuse(0x600B4844, out mac))
+						   throw new Exception("Failed to read C61 eFuse MAC registers.");
+				   }
+				   else
+				   {
+					  // ESP32: Read from eFuse registers
+					  uint baseAddr = 0x3FF5A000;
+					  uint w1 = ReadReg(baseAddr + 0x04);
+					  uint w2 = ReadReg(baseAddr + 0x08);
 
-                      mac = new byte[6];
-                      mac[0] = (byte)((w2 >> 8) & 0xFF);
-                      mac[1] = (byte)((w2 >> 0) & 0xFF);
-                      mac[2] = (byte)((w1 >> 24) & 0xFF);
-                      mac[3] = (byte)((w1 >> 16) & 0xFF);
-                      mac[4] = (byte)((w1 >> 8) & 0xFF);
-                      mac[5] = (byte)((w1 >> 0) & 0xFF);
-                  }
-                 
-                 string s = BitConverter.ToString(mac);
-                 addLogLine($"MAC Address: {s}");
-                 return s;
-             }
-             catch(Exception ex)
-             {
-                 addErrorLine("Failed to read MAC: " + ex.Message);
-                 return null;
-             }
-        }
+					  mac = new byte[6];
+					  mac[0] = (byte)((w2 >> 8) & 0xFF);
+					  mac[1] = (byte)((w2 >> 0) & 0xFF);
+					  mac[2] = (byte)((w1 >> 24) & 0xFF);
+					  mac[3] = (byte)((w1 >> 16) & 0xFF);
+					  mac[4] = (byte)((w1 >> 8) & 0xFF);
+					  mac[5] = (byte)((w1 >> 0) & 0xFF);
+				  }
+				 
+				 string s = BitConverter.ToString(mac);
+				 addLogLine($"MAC Address: {s}");
+				 return s;
+			 }
+			 catch(Exception ex)
+			 {
+				 addErrorLine("Failed to read MAC: " + ex.Message);
+				 return null;
+			 }
+		}
 
-        public bool Connect()
-        {
-            logger.setState("Connecting to ESP...", Color.Yellow);
+		public bool Connect()
+		{
+			logger.setState("Connecting to ESP...", Color.Yellow);
 			addLogLine($"Connecting to {serialName}...");
 			addLogLine($"Boot communication uses 115200 baud; requested flash transfer baud is {baudrate}.");
-            if(!openPort())
-            {
-                return false;
-            }
+			if(!openPort())
+			{
+				return false;
+			}
 
-            // Reset strategy: DTR=0, RTS=1 -> DTR=1, RTS=0
-            serial.DtrEnable = false;
-            serial.RtsEnable = true;
-            Thread.Sleep(100);
-            serial.DtrEnable = true;
-            serial.RtsEnable = false;
-            Thread.Sleep(500);
+			// Reset strategy: DTR=0, RTS=1 -> DTR=1, RTS=0
+			serial.DtrEnable = false;
+			serial.RtsEnable = true;
+			Thread.Sleep(100);
+			serial.DtrEnable = true;
+			serial.RtsEnable = false;
+			Thread.Sleep(500);
 
-            if (Sync())
-            {
-                switch (chipType)
-                {
-                    case BKType.ESP32S2:
-                        detectedChip = "ESP32-S2";
-                        break;
-                    case BKType.ESP32C2:
-                        detectedChip = "ESP32-C2";
-                        break;
-                    case BKType.ESP32C3:
-                        detectedChip = "ESP32-C3";
-                        break;
-                    case BKType.ESP32C5:
-                        detectedChip = "ESP32-C5";
-                        break;
-                    case BKType.ESP32C6:
-                        detectedChip = "ESP32-C6";
-                        break;
-                    case BKType.ESP32C61:
-                        detectedChip = "ESP32-C61";
-                        break;
-                    case BKType.ESP32S3:
-                        detectedChip = "ESP32-S3";
-                        break;
-                    case BKType.ESP8266:
-                        detectedChip = "ESP8266";
-                        break;
-                    case BKType.ESP32:
-                        detectedChip = "ESP32";
-                        break;
-                    default:
-                        detectedChip = chipType.ToString();
-                        break;
-                }
+			if (Sync())
+			{
+				switch (chipType)
+				{
+					case BKType.ESP32S2:
+						detectedChip = "ESP32-S2";
+						break;
+					case BKType.ESP32C2:
+						detectedChip = "ESP32-C2";
+						break;
+					case BKType.ESP32C3:
+						detectedChip = "ESP32-C3";
+						break;
+					case BKType.ESP32C5:
+						detectedChip = "ESP32-C5";
+						break;
+					case BKType.ESP32C6:
+						detectedChip = "ESP32-C6";
+						break;
+					case BKType.ESP32C61:
+						detectedChip = "ESP32-C61";
+						break;
+					case BKType.ESP32S3:
+						detectedChip = "ESP32-S3";
+						break;
+					case BKType.ESP8266:
+						detectedChip = "ESP8266";
+						break;
+					case BKType.ESP32:
+						detectedChip = "ESP32";
+						break;
+					default:
+						detectedChip = chipType.ToString();
+						break;
+				}
 
-                // Try auto-detect and warn if it disagrees with user selection
-                uint? chipMagic = GetChipId();
-                if (chipMagic.HasValue)
-                {
-                    string autoName = null;
-                    if (ChipIDs.ContainsKey(chipMagic.Value))
-                        autoName = ChipIDs[chipMagic.Value];
-                    else if (ChipMagicValues.ContainsKey(chipMagic.Value))
-                        autoName = ChipMagicValues[chipMagic.Value];
+				// Try auto-detect and warn if it disagrees with user selection
+				uint? chipMagic = GetChipId();
+				if (chipMagic.HasValue)
+				{
+					string autoName = null;
+					if (ChipIDs.ContainsKey(chipMagic.Value))
+						autoName = ChipIDs[chipMagic.Value];
+					else if (ChipMagicValues.ContainsKey(chipMagic.Value))
+						autoName = ChipMagicValues[chipMagic.Value];
 
-                    if (autoName != null && autoName != detectedChip)
-                    {
-                        addErrorLine("==========================================================");
-                        addErrorLine($"Are you sure about chip type? Specified: {detectedChip} Detected: {autoName}");
-                        addErrorLine("==========================================================");
-                    }
-                    else if (autoName != null)
+					if (autoName != null && autoName != detectedChip)
+					{
+						addErrorLine("==========================================================");
+						addErrorLine($"Are you sure about chip type? Specified: {detectedChip} Detected: {autoName}");
+						addErrorLine("==========================================================");
+					}
+					else if (autoName != null)
 						Debug.WriteLine($"Auto-detect confirmed: {autoName}");
 					else
 						addWarningLine($"Chip identification value 0x{chipMagic.Value:X8} is not recognized; continuing with selected {detectedChip}.");
-                }
+				}
 
-                logger.setState($"{detectedChip} synced", Color.LightGreen);
+				logger.setState($"{detectedChip} synced", Color.LightGreen);
 				addSuccess($"Device identified: {detectedChip}." + Environment.NewLine);
 
-                if (!SpiAttach())
-                {
-                    addErrorLine("Failed to configure SPI pins.");
-                    return false;
-                }
-                return true;
-            }
-            return false;
-        }
+				if (!SpiAttach())
+				{
+					addErrorLine("Failed to configure SPI pins.");
+					return false;
+				}
+				return true;
+			}
+			return false;
+		}
 
 
-        bool SpiAttach()
-        {
-             try
-             {
+		bool SpiAttach()
+		{
+			 try
+			 {
 				Debug.WriteLine("Configuring SPI flash pins (SpiAttach)...");
 
-                 if (bIsESP8266 && !isStub)
-                 {
-                     // ESP8266 ROM has no SPI_ATTACH command.
-                     // Use FLASH_BEGIN(size=0, offset=0) which initializes SPI as a side effect.
+				 if (bIsESP8266 && !isStub)
+				 {
+					 // ESP8266 ROM has no SPI_ATTACH command.
+					 // Use FLASH_BEGIN(size=0, offset=0) which initializes SPI as a side effect.
 					Debug.WriteLine("ESP8266 ROM: using FLASH_BEGIN to init SPI...");
-                     List<byte> fbPayload = new List<byte>();
-                     fbPayload.AddRange(BitConverter.GetBytes((uint)0)); // size
-                     fbPayload.AddRange(BitConverter.GetBytes((uint)0)); // blocks
-                     fbPayload.AddRange(BitConverter.GetBytes((uint)0)); // block size
-                     fbPayload.AddRange(BitConverter.GetBytes((uint)0)); // offset
-                     sendCommand(ESPCommand.FLASH_BEGIN, fbPayload.ToArray());
-                     var fbResp = readPacket(5000, ESPCommand.FLASH_BEGIN);
-                     if (fbResp == null)
-                     {
-                         addErrorLine("FLASH_BEGIN (SPI init) failed.");
-                         return false;
-                     }
+					 List<byte> fbPayload = new List<byte>();
+					 fbPayload.AddRange(BitConverter.GetBytes((uint)0)); // size
+					 fbPayload.AddRange(BitConverter.GetBytes((uint)0)); // blocks
+					 fbPayload.AddRange(BitConverter.GetBytes((uint)0)); // block size
+					 fbPayload.AddRange(BitConverter.GetBytes((uint)0)); // offset
+					 sendCommand(ESPCommand.FLASH_BEGIN, fbPayload.ToArray());
+					 var fbResp = readPacket(5000, ESPCommand.FLASH_BEGIN);
+					 if (fbResp == null)
+					 {
+						 addErrorLine("FLASH_BEGIN (SPI init) failed.");
+						 return false;
+					 }
 					Debug.WriteLine("SPI initialized via FLASH_BEGIN.");
-                     return true;
-                 }
+					 return true;
+				 }
 
-                 // ESP32 (and stubs for all chips) use the SPI_ATTACH command
-                 int payloadSize = isStub ? 4 : 8;
-                 byte[] payload = new byte[payloadSize];
-                 sendCommand(ESPCommand.SPI_ATTACH, payload);
-                 var resp = readPacket(3000, ESPCommand.SPI_ATTACH);
-                 if(resp == null) 
-                 {
-                     addErrorLine("SPI_ATTACH failed (no response or error status).");
-                     return false;
-                 }
+				 // ESP32 (and stubs for all chips) use the SPI_ATTACH command
+				 int payloadSize = isStub ? 4 : 8;
+				 byte[] payload = new byte[payloadSize];
+				 sendCommand(ESPCommand.SPI_ATTACH, payload);
+				 var resp = readPacket(3000, ESPCommand.SPI_ATTACH);
+				 if(resp == null) 
+				 {
+					 addErrorLine("SPI_ATTACH failed (no response or error status).");
+					 return false;
+				 }
 				Debug.WriteLine("SPI_ATTACH success.");
-                 return true;
-             }
-             catch(Exception ex)
-             {
-                 addErrorLine("SPI_ATTACH exception: " + ex.Message);
-                 return false;
-             }
-        }
+				 return true;
+			 }
+			 catch(Exception ex)
+			 {
+				 addErrorLine("SPI_ATTACH exception: " + ex.Message);
+				 return false;
+			 }
+		}
 
-        public bool SpiSetParams(uint size)
-        {
-             try
-             {
+		public bool SpiSetParams(uint size)
+		{
+			 try
+			 {
 				Debug.WriteLine($"Setting SPI flash parameters for {size / 1024 / 1024}MB...");
-                 List<byte> payload = new List<byte>();
-                 payload.AddRange(BitConverter.GetBytes((uint)0)); // id
-                 payload.AddRange(BitConverter.GetBytes(size));    // total size
-                 payload.AddRange(BitConverter.GetBytes((uint)64 * 1024)); // block size
-                 payload.AddRange(BitConverter.GetBytes((uint)4 * 1024));  // sector size
-                 payload.AddRange(BitConverter.GetBytes((uint)256));       // page size
-                 payload.AddRange(BitConverter.GetBytes((uint)0xFFFF));    // status mask
+				 List<byte> payload = new List<byte>();
+				 payload.AddRange(BitConverter.GetBytes((uint)0)); // id
+				 payload.AddRange(BitConverter.GetBytes(size));    // total size
+				 payload.AddRange(BitConverter.GetBytes((uint)64 * 1024)); // block size
+				 payload.AddRange(BitConverter.GetBytes((uint)4 * 1024));  // sector size
+				 payload.AddRange(BitConverter.GetBytes((uint)256));       // page size
+				 payload.AddRange(BitConverter.GetBytes((uint)0xFFFF));    // status mask
 
-                 sendCommand(ESPCommand.SPI_SET_PARAMS, payload.ToArray());
-                 var resp = readPacket(1000, ESPCommand.SPI_SET_PARAMS);
-                 if (resp == null)
-                 {
-                     addErrorLine("SPI_SET_PARAMS failed (no response)");
-                     return false;
-                 }
+				 sendCommand(ESPCommand.SPI_SET_PARAMS, payload.ToArray());
+				 var resp = readPacket(1000, ESPCommand.SPI_SET_PARAMS);
+				 if (resp == null)
+				 {
+					 addErrorLine("SPI_SET_PARAMS failed (no response)");
+					 return false;
+				 }
 				Debug.WriteLine("SPI_SET_PARAMS success");
-                 return true;
-             }
-             catch (Exception ex)
-             {
-                 addErrorLine("SPI_SET_PARAMS exception: " + ex.Message);
-                 return false;
-             }
-        }
+				 return true;
+			 }
+			 catch (Exception ex)
+			 {
+				 addErrorLine("SPI_SET_PARAMS exception: " + ex.Message);
+				 return false;
+			 }
+		}
 
-        public bool ChangeBaudrate(int newBaud)
-        {
-            try
-            {
+		public bool ChangeBaudrate(int newBaud)
+		{
+			try
+			{
 				Debug.WriteLine($"Requesting baud rate change to {newBaud}...");
-                byte[] payload = new byte[8];
-                // new baud
-                Array.Copy(BitConverter.GetBytes(newBaud), 0, payload, 0, 4);
-                // esptool: second arg is old baud when running stub, 0 for ROM
-                int oldBaud = isStub ? serial.BaudRate : 0;
-                Array.Copy(BitConverter.GetBytes(oldBaud), 0, payload, 4, 4);
+				byte[] payload = new byte[8];
+				// new baud
+				Array.Copy(BitConverter.GetBytes(newBaud), 0, payload, 0, 4);
+				// esptool: second arg is old baud when running stub, 0 for ROM
+				int oldBaud = isStub ? serial.BaudRate : 0;
+				Array.Copy(BitConverter.GetBytes(oldBaud), 0, payload, 4, 4);
 
-                sendCommand(ESPCommand.CHANGE_BAUDRATE, payload);
-                
-                // Wait for the ACK at the current (old) baud rate
-                var resp = readPacket(3000, ESPCommand.CHANGE_BAUDRATE);
-                if (resp == null)
-                {
-                    addErrorLine("Baudrate change request failed (no response)");
-                    return false;
-                }
+				sendCommand(ESPCommand.CHANGE_BAUDRATE, payload);
+				
+				// Wait for the ACK at the current (old) baud rate
+				var resp = readPacket(3000, ESPCommand.CHANGE_BAUDRATE);
+				if (resp == null)
+				{
+					addErrorLine("Baudrate change request failed (no response)");
+					return false;
+				}
 
-                // Give the chip a tiny bit of time to actually flip its internal switch
-                Thread.Sleep(50);
-                serial.BaudRate = newBaud;
-                Thread.Sleep(50); // Give the local OS/Driver time to settle
-                serial.DiscardInBuffer();
+				// Give the chip a tiny bit of time to actually flip its internal switch
+				Thread.Sleep(50);
+				serial.BaudRate = newBaud;
+				Thread.Sleep(50); // Give the local OS/Driver time to settle
+				serial.DiscardInBuffer();
 				addLogLine($"Transfer baud: {newBaud} baud.");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                addErrorLine("ChangeBaudrate exception: " + ex.Message);
-                return false;
-            }
-        }
+				return true;
+			}
+			catch (Exception ex)
+			{
+				addErrorLine("ChangeBaudrate exception: " + ex.Message);
+				return false;
+			}
+		}
 
-        void sendCommand(ESPCommand op, byte[] data, uint checksum = 0)
-        {
-            // Packet: C0 [00 op len(2) checksum(4)] [data] C0
-            // Inside brackets is SLIP escaped.
-            
-            // Construct inner packet (matches esptool struct.pack("<BBHI", 0x00, op, len(data), chk) + data)
-            List<byte> inner = new List<byte>();
-            inner.Add(0x00);
-            inner.Add((byte)op);
-            inner.AddRange(BitConverter.GetBytes((ushort)data.Length));
-            inner.AddRange(BitConverter.GetBytes(checksum));
-            inner.AddRange(data);
+		void sendCommand(ESPCommand op, byte[] data, uint checksum = 0)
+		{
+			// Packet: C0 [00 op len(2) checksum(4)] [data] C0
+			// Inside brackets is SLIP escaped.
+			
+			// Construct inner packet (matches esptool struct.pack("<BBHI", 0x00, op, len(data), chk) + data)
+			List<byte> inner = new List<byte>();
+			inner.Add(0x00);
+			inner.Add((byte)op);
+			inner.AddRange(BitConverter.GetBytes((ushort)data.Length));
+			inner.AddRange(BitConverter.GetBytes(checksum));
+			inner.AddRange(data);
 
-            // Console.WriteLine($"[DEBUG] TX cmd=0x{(byte)op:X2} data_len={data.Length} chk=0x{checksum:X8}");
+			// Console.WriteLine($"[DEBUG] TX cmd=0x{(byte)op:X2} data_len={data.Length} chk=0x{checksum:X8}");
 
-            // SLIP encode
-            List<byte> packet = new List<byte>();
-            packet.Add(SLIP_END);
-            foreach (byte b in inner)
-            {
-                if (b == SLIP_END)
-                {
-                    packet.Add(SLIP_ESC);
-                    packet.Add(SLIP_ESC_END);
-                }
-                else if (b == SLIP_ESC)
-                {
-                    packet.Add(SLIP_ESC);
-                    packet.Add(SLIP_ESC_ESC);
-                }
-                else
-                {
-                    packet.Add(b);
-                }
-            }
-            packet.Add(SLIP_END);
+			// SLIP encode
+			List<byte> packet = new List<byte>();
+			packet.Add(SLIP_END);
+			foreach (byte b in inner)
+			{
+				if (b == SLIP_END)
+				{
+					packet.Add(SLIP_ESC);
+					packet.Add(SLIP_ESC_END);
+				}
+				else if (b == SLIP_ESC)
+				{
+					packet.Add(SLIP_ESC);
+					packet.Add(SLIP_ESC_ESC);
+				}
+				else
+				{
+					packet.Add(b);
+				}
+			}
+			packet.Add(SLIP_END);
 
-            serial.Write(packet.ToArray(), 0, packet.Count);
-        }
+			serial.Write(packet.ToArray(), 0, packet.Count);
+		}
 
-        // resp_data_len: how many bytes of actual response data to expect before the status bytes
-        // For most commands this is 0 (status bytes are the first 2 bytes of data payload)
-        // For SPI_FLASH_MD5 with stub: 16 (16 bytes MD5 + 2 status bytes)
-        // For READ_FLASH_SLOW: 64 (64 bytes data + 2 status bytes)
-        byte[] readPacket(int timeoutMs = 1000, ESPCommand expectedCmd = (ESPCommand)0, int resp_data_len = 0)
-        {
-              // Unified SLIP reader + response parser - matches esptool's command() + check_command()
-              List<byte> payload = new List<byte>();
-              serial.ReadTimeout = timeoutMs;
-              
-              long startTicks = DateTime.Now.Ticks;
-              
-              // esptool tries up to 100 responses to find the matching one
-              for (int retry = 0; retry < 100; retry++)
-              {
-                  if(timeoutMs > 0 && (DateTime.Now.Ticks - startTicks) / 10000 > timeoutMs)
-                      break;
-                  
-                  payload.Clear();
-                  bool inPacket = false;
-                  bool escape = false;
-                  bool gotPacket = false;
-                  
-                  try 
-                  {
-                      while (true)
-                      {
-                          if(timeoutMs > 0 && (DateTime.Now.Ticks - startTicks) / 10000 > timeoutMs)
-                              return null;
+		// resp_data_len: how many bytes of actual response data to expect before the status bytes
+		// For most commands this is 0 (status bytes are the first 2 bytes of data payload)
+		// For SPI_FLASH_MD5 with stub: 16 (16 bytes MD5 + 2 status bytes)
+		// For READ_FLASH_SLOW: 64 (64 bytes data + 2 status bytes)
+		byte[] readPacket(int timeoutMs = 1000, ESPCommand expectedCmd = (ESPCommand)0, int resp_data_len = 0)
+		{
+			  // Unified SLIP reader + response parser - matches esptool's command() + check_command()
+			  List<byte> payload = new List<byte>();
+			  serial.ReadTimeout = timeoutMs;
+			  
+			  long startTicks = DateTime.Now.Ticks;
+			  
+			  // esptool tries up to 100 responses to find the matching one
+			  for (int retry = 0; retry < 100; retry++)
+			  {
+				  if(timeoutMs > 0 && (DateTime.Now.Ticks - startTicks) / 10000 > timeoutMs)
+					  break;
+				  
+				  payload.Clear();
+				  bool inPacket = false;
+				  bool escape = false;
+				  bool gotPacket = false;
+				  
+				  try 
+				  {
+					  while (true)
+					  {
+						  if(timeoutMs > 0 && (DateTime.Now.Ticks - startTicks) / 10000 > timeoutMs)
+							  return null;
 
-                          int waiting = serial.BytesToRead;
-                          int toRead = waiting > 0 ? Math.Min(waiting, _slipBuf.Length) : 1;
-                          int count = serial.Read(_slipBuf, 0, toRead);
-                          if (count <= 0) break;
+						  int waiting = serial.BytesToRead;
+						  int toRead = waiting > 0 ? Math.Min(waiting, _slipBuf.Length) : 1;
+						  int count = serial.Read(_slipBuf, 0, toRead);
+						  if (count <= 0) break;
 
-                          for (int i = 0; i < count; i++)
-                          {
-                              byte b = _slipBuf[i];
-                              if (b == SLIP_END)
-                              {
-                                  if (inPacket && payload.Count > 0)
-                                  {
-                                      gotPacket = true;
-                                      goto packetDone;
-                                  }
-                                  else
-                                  {
-                                      inPacket = true;
-                                      payload.Clear();
-                                  }
-                              }
-                              else if (inPacket)
-                              {
-                                  if (b == SLIP_ESC)
-                                      escape = true;
-                                  else if (escape)
-                                  {
-                                      if (b == SLIP_ESC_END) payload.Add(SLIP_END);
-                                      else if (b == SLIP_ESC_ESC) payload.Add(SLIP_ESC);
-                                      escape = false;
-                                  }
-                                  else
-                                      payload.Add(b);
-                              }
-                          }
-                      }
-                  }
-                  catch(TimeoutException) { }
+						  for (int i = 0; i < count; i++)
+						  {
+							  byte b = _slipBuf[i];
+							  if (b == SLIP_END)
+							  {
+								  if (inPacket && payload.Count > 0)
+								  {
+									  gotPacket = true;
+									  goto packetDone;
+								  }
+								  else
+								  {
+									  inPacket = true;
+									  payload.Clear();
+								  }
+							  }
+							  else if (inPacket)
+							  {
+								  if (b == SLIP_ESC)
+									  escape = true;
+								  else if (escape)
+								  {
+									  if (b == SLIP_ESC_END) payload.Add(SLIP_END);
+									  else if (b == SLIP_ESC_ESC) payload.Add(SLIP_ESC);
+									  escape = false;
+								  }
+								  else
+									  payload.Add(b);
+							  }
+						  }
+					  }
+				  }
+				  catch(TimeoutException) { }
 
-                  packetDone:
-                  if (!gotPacket) continue;
+				  packetDone:
+				  if (!gotPacket) continue;
 
-                  byte[] raw = payload.ToArray();
-                  // Console.WriteLine($"[DEBUG] RX Packet ({raw.Length}b): {BitConverter.ToString(raw)}");
+				  byte[] raw = payload.ToArray();
+				  // Console.WriteLine($"[DEBUG] RX Packet ({raw.Length}b): {BitConverter.ToString(raw)}");
 
-                  // Parse: resp(1) op_ret(1) len_ret(2) val(4) [data...]
-                  if (raw.Length < 8) { /* Console.WriteLine($"[DEBUG] Packet too short: {raw.Length}"); */ continue; }
-                  byte resp = raw[0];
-                  byte op_ret = raw[1];
-                  uint val = BitConverter.ToUInt32(raw, 4);
-                  byte[] data = new byte[raw.Length - 8];
-                  if (data.Length > 0) Array.Copy(raw, 8, data, 0, data.Length);
+				  // Parse: resp(1) op_ret(1) len_ret(2) val(4) [data...]
+				  if (raw.Length < 8) { /* Console.WriteLine($"[DEBUG] Packet too short: {raw.Length}"); */ continue; }
+				  byte resp = raw[0];
+				  byte op_ret = raw[1];
+				  uint val = BitConverter.ToUInt32(raw, 4);
+				  byte[] data = new byte[raw.Length - 8];
+				  if (data.Length > 0) Array.Copy(raw, 8, data, 0, data.Length);
 
-                  if (resp != 0x01) { /* Console.WriteLine($"[DEBUG] Not a response (0x{resp:X2})"); */ continue; }
-                  if (expectedCmd != 0 && op_ret != (byte)expectedCmd)
-                  {
-                      // Console.WriteLine($"[DEBUG] CMD mismatch: got 0x{op_ret:X2}, want 0x{(byte)expectedCmd:X2}");
-                      continue;
-                  }
+				  if (resp != 0x01) { /* Console.WriteLine($"[DEBUG] Not a response (0x{resp:X2})"); */ continue; }
+				  if (expectedCmd != 0 && op_ret != (byte)expectedCmd)
+				  {
+					  // Console.WriteLine($"[DEBUG] CMD mismatch: got 0x{op_ret:X2}, want 0x{(byte)expectedCmd:X2}");
+					  continue;
+				  }
 
-                  // check_command: status_bytes = data[resp_data_len : resp_data_len + 2]
-                  if (data.Length < resp_data_len + 2)
-                  {
-                      if (data.Length >= 2 && data[0] != 0)
-                      {
-                          addErrorLine($"CMD 0x{op_ret:X2} error: status=0x{data[0]:X2} err=0x{data[1]:X2}");
-                          return null;
-                      }
-                      return BitConverter.GetBytes(val);
-                  }
+				  // check_command: status_bytes = data[resp_data_len : resp_data_len + 2]
+				  if (data.Length < resp_data_len + 2)
+				  {
+					  if (data.Length >= 2 && data[0] != 0)
+					  {
+						  addErrorLine($"CMD 0x{op_ret:X2} error: status=0x{data[0]:X2} err=0x{data[1]:X2}");
+						  return null;
+					  }
+					  return BitConverter.GetBytes(val);
+				  }
 
-                  if (data[resp_data_len] != 0)
-                  {
-                      addErrorLine($"CMD 0x{op_ret:X2} error: status=0x{data[resp_data_len]:X2} err=0x{data[resp_data_len+1]:X2}");
-                      return null;
-                  }
+				  if (data[resp_data_len] != 0)
+				  {
+					  addErrorLine($"CMD 0x{op_ret:X2} error: status=0x{data[resp_data_len]:X2} err=0x{data[resp_data_len+1]:X2}");
+					  return null;
+				  }
 
-                  // if resp_data_len > 0: return data[:resp_data_len], else: return val
-                  if (resp_data_len > 0)
-                  {
-                      byte[] result = new byte[resp_data_len];
-                      Array.Copy(data, 0, result, 0, resp_data_len);
-                      return result;
-                  }
-                  return BitConverter.GetBytes(val);
-              }
-              
-              // Console.WriteLine($"[DEBUG] readPacket exhausted for cmd 0x{(byte)expectedCmd:X2}");
-              return null;
-        }
+				  // if resp_data_len > 0: return data[:resp_data_len], else: return val
+				  if (resp_data_len > 0)
+				  {
+					  byte[] result = new byte[resp_data_len];
+					  Array.Copy(data, 0, result, 0, resp_data_len);
+					  return result;
+				  }
+				  return BitConverter.GetBytes(val);
+			  }
+			  
+			  // Console.WriteLine($"[DEBUG] readPacket exhausted for cmd 0x{(byte)expectedCmd:X2}");
+			  return null;
+		}
 
-        public override void doRead(int startSector = 0x000, int sectors = 10, bool fullRead = false)
-        {
+		public override void doRead(int startSector = 0x000, int sectors = 10, bool fullRead = false)
+		{
 			readFailed = true;
 			ms?.Dispose();
 			ms = null;
 			int lastPercent = -1;
 			try
 			{
-            if (Connect())
-            {
-                // GetChipId already called in Connect()
-                ReadMac();
-                uint? fid = ReadFlashId();
-                uint flashSize = 0;
-                if (fid.HasValue)
-                {
-                    uint sizeCode = (fid.Value >> 16) & 0xFF;
-                    if (sizeCode > 0 && sizeCode <= 31)
-                    {
-                        flashSize = 1u << (int)sizeCode;
-                        SpiSetParams(flashSize);
-                    }
-                }
+			if (Connect())
+			{
+				// GetChipId already called in Connect()
+				ReadMac();
+				uint? fid = ReadFlashId();
+				uint flashSize = 0;
+				if (fid.HasValue)
+				{
+					uint sizeCode = (fid.Value >> 16) & 0xFF;
+					if (sizeCode > 0 && sizeCode <= 31)
+					{
+						flashSize = 1u << (int)sizeCode;
+						SpiSetParams(flashSize);
+					}
+				}
 
-                if (fullRead && flashSize > 0)
-                {
-                    sectors = (int)(flashSize / 0x1000);
-                }
+				if (fullRead && flashSize > 0)
+				{
+					sectors = (int)(flashSize / 0x1000);
+				}
 
-                logger.setState("Reading flash...", Color.LightBlue);
+				logger.setState("Reading flash...", Color.LightBlue);
 
-                ms = new MemoryStream();
-                var swRead = Stopwatch.StartNew();
-                uint startAddr = (uint)startSector * 0x1000;
-                uint totalSize = (uint)sectors * 0x1000;
+				ms = new MemoryStream();
+				var swRead = Stopwatch.StartNew();
+				uint startAddr = (uint)startSector * 0x1000;
+				uint totalSize = (uint)sectors * 0x1000;
 
-                // Try stub for faster reads
-                if (!LegacyMode && UploadStub())
-                {
-                    // Re-attach SPI after stub starts
+				// Try stub for faster reads
+				if (!LegacyMode && UploadStub())
+				{
+					// Re-attach SPI after stub starts
 					Debug.WriteLine("Re-attaching SPI after stub...");
-                    SpiAttach();
-                    if (baudrate > 115200)
-                    {
+					SpiAttach();
+					if (baudrate > 115200)
+					{
 						Debug.WriteLine($"Changing baud rate to {baudrate}...");
-                        ChangeBaudrate(baudrate);
+						ChangeBaudrate(baudrate);
 						Debug.WriteLine($"Baud rate changed to {baudrate}.");
-                    }
-                    logger.setState($"Reading flash...", Color.LightBlue);
+					}
+					logger.setState($"Reading flash...", Color.LightBlue);
 
 					addLogLine($"Read range: 0x{startAddr:X6}-0x{startAddr + totalSize - 1:X6} ({totalSize} bytes), at {serial.BaudRate} baud.");
-                    try
-                    {
-                        byte[] flashData = ReadFlashFast(startAddr, totalSize, (received, total) =>
-                        {
-                            logger.setProgress(received, total);
+					try
+					{
+						byte[] flashData = ReadFlashFast(startAddr, totalSize, (received, total) =>
+						{
+							logger.setProgress(received, total);
 							int percent = (int)((long)received * 100 / total);
 							if (percent != lastPercent)
 							{
 								SetOperationProgress($"Reading: ({percent,3}%) 0x{startAddr + received:X6}", Color.Black);
 								lastPercent = percent;
 							}
-                        });
-                        ms.Write(flashData, 0, flashData.Length);
-                        swRead.Stop();
-                        double secsFast = swRead.Elapsed.TotalSeconds;
-                        double kbitsFast = (totalSize * 8.0 / 1000.0) / secsFast;
-                        double kbytesFast = (totalSize / 1024.0) / secsFast;
+						});
+						ms.Write(flashData, 0, flashData.Length);
+						swRead.Stop();
+						double secsFast = swRead.Elapsed.TotalSeconds;
+						double kbitsFast = (totalSize * 8.0 / 1000.0) / secsFast;
+						double kbytesFast = (totalSize / 1024.0) / secsFast;
 						readFailed = false;
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
+						return;
+					}
+					catch (Exception ex)
+					{
 						FinishOperationProgress();
 						if (cancellationToken.IsCancellationRequested || isCancelled) return;
 						if (HandleSerialConnectionLost(ex)) return;
-                        logger.setState("Read error", Color.Red);
-                        addErrorLine("Fast read failed: " + ex.Message);
-                        addLogLine("Falling back to slow read...");
-                    }
-                }
+						logger.setState("Read error", Color.Red);
+						addErrorLine("Fast read failed: " + ex.Message);
+						addLogLine("Falling back to slow read...");
+					}
+				}
 
-                // Slow read fallback (ROM only, 64 bytes at a time)
-                uint blockSize = 64; // Max safe size for ROM READ_FLASH_SLOW
+				// Slow read fallback (ROM only, 64 bytes at a time)
+				uint blockSize = 64; // Max safe size for ROM READ_FLASH_SLOW
 
 				addLogLine($"Read range: 0x{startAddr:X6}-0x{startAddr + totalSize - 1:X6} ({totalSize} bytes), at {serial.BaudRate} baud.");
 				lastPercent = -1;
-                uint currentAddr = startAddr;
-                while (currentAddr < startAddr + totalSize)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    uint toRead = Math.Min(blockSize, startAddr + totalSize - currentAddr);
-                    byte[] block = ReadFlashBlockSlow(currentAddr, toRead);
-                    
-                    if (block == null)
-                    {
-                        addErrorLine($"Failed to read block at 0x{currentAddr:X}");
-                        return;
-                    }
+				uint currentAddr = startAddr;
+				while (currentAddr < startAddr + totalSize)
+				{
+					cancellationToken.ThrowIfCancellationRequested();
+					uint toRead = Math.Min(blockSize, startAddr + totalSize - currentAddr);
+					byte[] block = ReadFlashBlockSlow(currentAddr, toRead);
+					
+					if (block == null)
+					{
+						addErrorLine($"Failed to read block at 0x{currentAddr:X}");
+						return;
+					}
 
-                    if (block.Length != toRead)
-                    {
-                         addWarningLine($"Read mismatch at 0x{currentAddr:X}: Request {toRead}, Got {block.Length}");
-                    }
-                    // If we got 0, we can't progress. Avoid infinite loop.
-                    if (block.Length == 0)
-                    {
-                        addErrorLine("Read 0 bytes, aborting.");
-                        return;
-                    }
+					if (block.Length != toRead)
+					{
+						 addWarningLine($"Read mismatch at 0x{currentAddr:X}: Request {toRead}, Got {block.Length}");
+					}
+					// If we got 0, we can't progress. Avoid infinite loop.
+					if (block.Length == 0)
+					{
+						addErrorLine("Read 0 bytes, aborting.");
+						return;
+					}
 
-                    ms.Write(block, 0, block.Length);
-                    currentAddr += (uint)block.Length;
-                    logger.setProgress((int)(currentAddr - startAddr), (int)totalSize);
+					ms.Write(block, 0, block.Length);
+					currentAddr += (uint)block.Length;
+					logger.setProgress((int)(currentAddr - startAddr), (int)totalSize);
 					int percent = (int)((long)(currentAddr - startAddr) * 100 / totalSize);
 					if (percent != lastPercent)
 					{
 						SetOperationProgress($"Reading: ({percent,3}%) 0x{currentAddr:X6}", Color.Black);
 						lastPercent = percent;
 					}
-                }
-                swRead.Stop();
-                double secsSlow = swRead.Elapsed.TotalSeconds;
-                double kbitsSlow = (totalSize * 8.0 / 1000.0) / secsSlow;
-                double kbytesSlow = (totalSize / 1024.0) / secsSlow;
+				}
+				swRead.Stop();
+				double secsSlow = swRead.Elapsed.TotalSeconds;
+				double kbitsSlow = (totalSize * 8.0 / 1000.0) / secsSlow;
+				double kbytesSlow = (totalSize / 1024.0) / secsSlow;
 				FinishOperationProgress();
 				readFailed = ms.Length != totalSize;
 				if (!readFailed)
 					addLogLine("Verification: independent full-range verification is unavailable in ROM slow-read mode.");
-            }
+			}
 			}
 			catch (Exception ex)
 			{
@@ -1613,111 +1613,111 @@ namespace BK7231Flasher
 			{
 				FinishOperationProgress();
 			}
-        }
+		}
 
-        public override void doReadAndWrite(int startSector, int sectors, string sourceFileName, WriteMode rwMode)
-        {
-            if (rwMode == WriteMode.OnlyWrite)
-            {
-                byte[] data = File.ReadAllBytes(sourceFileName);
-                doWrite((uint)startSector * 0x1000, data);
-            }
-            else
-            {
-                addErrorLine("ReadAndWrite mode not yet implemented for ESPFlasher.");
-            }
-        }
+		public override void doReadAndWrite(int startSector, int sectors, string sourceFileName, WriteMode rwMode)
+		{
+			if (rwMode == WriteMode.OnlyWrite)
+			{
+				byte[] data = File.ReadAllBytes(sourceFileName);
+				doWrite((uint)startSector * 0x1000, data);
+			}
+			else
+			{
+				addErrorLine("ReadAndWrite mode not yet implemented for ESPFlasher.");
+			}
+		}
 
-        public void doWrite(uint offset, byte[] data)
-        {
-            if (Connect())
-            {
+		public void doWrite(uint offset, byte[] data)
+		{
+			if (Connect())
+			{
 
-                // Try stub for faster writes
-                if (!LegacyMode)
-                {
-                    UploadStub();
-                    if (isStub)
-                    {
+				// Try stub for faster writes
+				if (!LegacyMode)
+				{
+					UploadStub();
+					if (isStub)
+					{
 						Debug.WriteLine("Re-attaching SPI after stub...");
-                        SpiAttach();
-                        if (baudrate > 115200)
-                        {
+						SpiAttach();
+						if (baudrate > 115200)
+						{
 							Debug.WriteLine($"Changing baud rate to {baudrate}...");
-                            ChangeBaudrate(baudrate);
+							ChangeBaudrate(baudrate);
 							Debug.WriteLine($"Baud rate changed to {baudrate}.");
-                        }
-                    }
-                }
+						}
+					}
+				}
 
-                uint blockSize = 0x400; // 1024 bytes
-                uint numBlocks = (uint)((data.Length + blockSize - 1) / blockSize);
+				uint blockSize = 0x400; // 1024 bytes
+				uint numBlocks = (uint)((data.Length + blockSize - 1) / blockSize);
 
-                logger.setState("Erasing flash...", Color.LightBlue);
+				logger.setState("Erasing flash...", Color.LightBlue);
 				addLogLine($"Write range: 0x{offset:X6}-0x{offset + data.Length - 1:X6} ({data.Length} bytes), at {serial.BaudRate} baud.");
 				int lastPercent = -1;
 				addLogLine("Preparing flash write; erase may take a while...");
-                var swWrite = Stopwatch.StartNew();
+				var swWrite = Stopwatch.StartNew();
 
-                // FLASH_BEGIN: size, numBlocks, blockSize, offset
-                List<byte> beginPayload = new List<byte>();
-                beginPayload.AddRange(BitConverter.GetBytes((uint)data.Length));
-                beginPayload.AddRange(BitConverter.GetBytes(numBlocks));
-                beginPayload.AddRange(BitConverter.GetBytes(blockSize));
-                beginPayload.AddRange(BitConverter.GetBytes(offset));
+				// FLASH_BEGIN: size, numBlocks, blockSize, offset
+				List<byte> beginPayload = new List<byte>();
+				beginPayload.AddRange(BitConverter.GetBytes((uint)data.Length));
+				beginPayload.AddRange(BitConverter.GetBytes(numBlocks));
+				beginPayload.AddRange(BitConverter.GetBytes(blockSize));
+				beginPayload.AddRange(BitConverter.GetBytes(offset));
 
-                sendCommand(ESPCommand.FLASH_BEGIN, beginPayload.ToArray());
-                // FLASH_BEGIN can take a long time if it triggers an erase
-                if (readPacket(30000, ESPCommand.FLASH_BEGIN) == null)
-                {
-                    addErrorLine("FLASH_BEGIN failed (erase timeout or error).");
-                    return;
-                }
+				sendCommand(ESPCommand.FLASH_BEGIN, beginPayload.ToArray());
+				// FLASH_BEGIN can take a long time if it triggers an erase
+				if (readPacket(30000, ESPCommand.FLASH_BEGIN) == null)
+				{
+					addErrorLine("FLASH_BEGIN failed (erase timeout or error).");
+					return;
+				}
 				Debug.WriteLine("FLASH_BEGIN OK, erase complete.");
-                logger.setState("Writing flash...", Color.LightBlue);
+				logger.setState("Writing flash...", Color.LightBlue);
 
-                for (uint i = 0; i < numBlocks; i++)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    uint start = i * blockSize;
-                    uint len = Math.Min(blockSize, (uint)data.Length - start);
+				for (uint i = 0; i < numBlocks; i++)
+				{
+					cancellationToken.ThrowIfCancellationRequested();
+					uint start = i * blockSize;
+					uint len = Math.Min(blockSize, (uint)data.Length - start);
 
-                    // Block must be padded to blockSize with 0xFF
-                    byte[] block = new byte[blockSize];
-                    for (int j = 0; j < block.Length; j++) block[j] = 0xFF;
-                    Array.Copy(data, (int)start, block, 0, (int)len);
+					// Block must be padded to blockSize with 0xFF
+					byte[] block = new byte[blockSize];
+					for (int j = 0; j < block.Length; j++) block[j] = 0xFF;
+					Array.Copy(data, (int)start, block, 0, (int)len);
 
-                    // FLASH_DATA: size(4), seq(4), reserved(4), reserved(4), data(blockSize)
-                    List<byte> dataPayload = new List<byte>();
-                    dataPayload.AddRange(BitConverter.GetBytes(blockSize));
-                    dataPayload.AddRange(BitConverter.GetBytes(i));
-                    dataPayload.AddRange(BitConverter.GetBytes((uint)0)); // reserved
-                    dataPayload.AddRange(BitConverter.GetBytes((uint)0)); // reserved
-                    dataPayload.AddRange(block);
+					// FLASH_DATA: size(4), seq(4), reserved(4), reserved(4), data(blockSize)
+					List<byte> dataPayload = new List<byte>();
+					dataPayload.AddRange(BitConverter.GetBytes(blockSize));
+					dataPayload.AddRange(BitConverter.GetBytes(i));
+					dataPayload.AddRange(BitConverter.GetBytes((uint)0)); // reserved
+					dataPayload.AddRange(BitConverter.GetBytes((uint)0)); // reserved
+					dataPayload.AddRange(block);
 
-                    // Calculate checksum over the data block
-                    byte checksum = 0xEF;
-                    foreach (byte b in block) checksum ^= b;
+					// Calculate checksum over the data block
+					byte checksum = 0xEF;
+					foreach (byte b in block) checksum ^= b;
 
-                    bool success = false;
-                    for (int retry = 0; retry < 3; retry++)
-                    {
-                        sendCommand(ESPCommand.FLASH_DATA, dataPayload.ToArray(), checksum);
-                        if (readPacket(3000, ESPCommand.FLASH_DATA) != null)
-                        {
-                            success = true;
-                            break;
-                        }
-                        addWarningLine($"FLASH_DATA failed at block {i}, retry {retry+1}...");
-                    }
+					bool success = false;
+					for (int retry = 0; retry < 3; retry++)
+					{
+						sendCommand(ESPCommand.FLASH_DATA, dataPayload.ToArray(), checksum);
+						if (readPacket(3000, ESPCommand.FLASH_DATA) != null)
+						{
+							success = true;
+							break;
+						}
+						addWarningLine($"FLASH_DATA failed at block {i}, retry {retry+1}...");
+					}
 
-                    if (!success)
-                    {
-                        addErrorLine($"FLASH_DATA failed at block {i} after 3 retries.");
-                        return;
-                    }
+					if (!success)
+					{
+						addErrorLine($"FLASH_DATA failed at block {i} after 3 retries.");
+						return;
+					}
 
-                    logger.setProgress((int)((i + 1) * blockSize), data.Length);
+					logger.setProgress((int)((i + 1) * blockSize), data.Length);
 					int completed = Math.Min((int)((i + 1) * blockSize), data.Length);
 					int percent = (int)((long)completed * 100 / data.Length);
 					if (percent != lastPercent)
@@ -1725,54 +1725,54 @@ namespace BK7231Flasher
 						SetOperationProgress($"Writing: ({percent,3}%) 0x{offset + completed:X6}", Color.Black);
 						lastPercent = percent;
 					}
-                }
+				}
 
-                swWrite.Stop();
-                double secsWrite = swWrite.Elapsed.TotalSeconds;
-                double kbitsWrite = (data.Length * 8.0 / 1000.0) / secsWrite;
-                double kbytesWrite = (data.Length / 1024.0) / secsWrite;
+				swWrite.Stop();
+				double secsWrite = swWrite.Elapsed.TotalSeconds;
+				double kbitsWrite = (data.Length * 8.0 / 1000.0) / secsWrite;
+				double kbytesWrite = (data.Length / 1024.0) / secsWrite;
 				FinishOperationProgress();
 				bool verificationPassed = !isStub;
 
-                // Verify with MD5 BEFORE sending FLASH_END (stub must still be running)
-                if (isStub)
-                {
-                     logger.setState("Verifying MD5...", Color.LightBlue);
+				// Verify with MD5 BEFORE sending FLASH_END (stub must still be running)
+				if (isStub)
+				{
+					 logger.setState("Verifying MD5...", Color.LightBlue);
 					addLogLine("Verification: target and host MD5.");
-                     try
-                     {
-                         using(var md5 = MD5.Create())
-                         {
-                             byte[] calc = md5.ComputeHash(data);
-                             string expected = BitConverter.ToString(calc).Replace("-","");
-                             
-                             string actual = FlashMd5Sum(offset, (uint)data.Length);
-                             if(actual == null) addErrorLine("Failed to get Flash MD5");
-                             else if(actual != expected) addErrorLine($"MD5 Mismatch! Expected {expected}, Got {actual}");
+					 try
+					 {
+						 using(var md5 = MD5.Create())
+						 {
+							 byte[] calc = md5.ComputeHash(data);
+							 string expected = BitConverter.ToString(calc).Replace("-","");
+							 
+							 string actual = FlashMd5Sum(offset, (uint)data.Length);
+							 if(actual == null) addErrorLine("Failed to get Flash MD5");
+							 else if(actual != expected) addErrorLine($"MD5 Mismatch! Expected {expected}, Got {actual}");
 							 else { verificationPassed = true; addSuccess("MD5 verification passed." + Environment.NewLine); logger.setState("Write verified", Color.LightGreen); }
-                         }
-                     }
-                     catch(Exception ex)
-                     {
-                         addErrorLine("Verification exception: " + ex.Message);
-                     }
-                }
+						 }
+					 }
+					 catch(Exception ex)
+					 {
+						 addErrorLine("Verification exception: " + ex.Message);
+					 }
+				}
 
-                // FLASH_END: no_entry=1 means stay in bootloader (don't reboot)
-                // esptool: struct.pack("<I", int(not reboot)) where reboot=False sends 1
+				// FLASH_END: no_entry=1 means stay in bootloader (don't reboot)
+				// esptool: struct.pack("<I", int(not reboot)) where reboot=False sends 1
 				Debug.WriteLine("Sending FLASH_END...");
-                sendCommand(ESPCommand.FLASH_END, BitConverter.GetBytes((uint)1));
-                var endResp = readPacket(1000, ESPCommand.FLASH_END);
-                if (endResp == null)
-                    addWarningLine("FLASH_END: no response (non-fatal).");
-                else
+				sendCommand(ESPCommand.FLASH_END, BitConverter.GetBytes((uint)1));
+				var endResp = readPacket(1000, ESPCommand.FLASH_END);
+				if (endResp == null)
+					addWarningLine("FLASH_END: no response (non-fatal).");
+				else
 					Debug.WriteLine("FLASH_END OK.");
 				if (verificationPassed)
 				{
 					logger.setState("Write complete", Color.LightGreen);
 					addSuccess("Write complete." + Environment.NewLine);
 				}
-            }
-        }
-    }
+			}
+		}
+	}
 }

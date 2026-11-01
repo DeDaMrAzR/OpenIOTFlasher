@@ -11,66 +11,66 @@ using System.Threading;
 
 namespace BK7231Flasher
 {
-    /// <summary>
-    /// Handles command-line flash operations without the GUI.
-    /// </summary>
-    public static class CommandLineRunner
-    {
-        [DllImport("kernel32.dll", SetLastError = true)]
-        static extern bool AttachConsole(int dwProcessId);
+	/// <summary>
+	/// Handles command-line flash operations without the GUI.
+	/// </summary>
+	public static class CommandLineRunner
+	{
+		[DllImport("kernel32.dll", SetLastError = true)]
+		static extern bool AttachConsole(int dwProcessId);
 
-        [DllImport("kernel32.dll", SetLastError = true)]
-        static extern bool AllocConsole();
+		[DllImport("kernel32.dll", SetLastError = true)]
+		static extern bool AllocConsole();
 
-        const int ATTACH_PARENT_PROCESS = -1;
+		const int ATTACH_PARENT_PROCESS = -1;
 
-        enum CliOperation
-        {
-            None,
-            Read,
-            Write,
-            CustomRead,
-            CustomWrite,
-            Test,
-            TuyaConfig,
-            Help
-        }
+		enum CliOperation
+		{
+			None,
+			Read,
+			Write,
+			CustomRead,
+			CustomWrite,
+			Test,
+			TuyaConfig,
+			Help
+		}
 
-        public static bool ShouldRunCli(string[] args)
-        {
-            return args.Length > 0;
-        }
+		public static bool ShouldRunCli(string[] args)
+		{
+			return args.Length > 0;
+		}
 
-        static string GetFirstAvailablePort()
-        {
-            var ports = SerialPort.GetPortNames();
-            Console.WriteLine($"[AutoSelect] Found ports: {string.Join(", ", ports)}");
-            Array.Sort(ports);
-            foreach (var port in ports)
-            {
-                try
-                {
-                    Console.WriteLine($"[AutoSelect] Trying {port}...");
-                    using (var sp = new SerialPort(port))
-                    {
-                        sp.Open();
-                        Thread.Sleep(200); // Wait inside critical section to ensure port can be closed and reopened cleanly
-                        sp.Close();
-                        Console.WriteLine($"[AutoSelect] Selected {port}");
-                        return port;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[AutoSelect] Failed to open {port}: {ex.Message}");
-                    // Ignore ports that can't be opened
-                }
-            }
-            return null;
-        }
+		static string GetFirstAvailablePort()
+		{
+			var ports = SerialPort.GetPortNames();
+			Console.WriteLine($"[AutoSelect] Found ports: {string.Join(", ", ports)}");
+			Array.Sort(ports);
+			foreach (var port in ports)
+			{
+				try
+				{
+					Console.WriteLine($"[AutoSelect] Trying {port}...");
+					using (var sp = new SerialPort(port))
+					{
+						sp.Open();
+						Thread.Sleep(200); // Wait inside critical section to ensure port can be closed and reopened cleanly
+						sp.Close();
+						Console.WriteLine($"[AutoSelect] Selected {port}");
+						return port;
+					}
+				}
+				catch (Exception ex)
+				{
+					Console.WriteLine($"[AutoSelect] Failed to open {port}: {ex.Message}");
+					// Ignore ports that can't be opened
+				}
+			}
+			return null;
+		}
 
-        public static void Run(string[] args)
-        {
+		public static void Run(string[] args)
+		{
 			bool outputRedirected = Console.IsOutputRedirected;
 			bool errorRedirected = Console.IsErrorRedirected;
 			if (!outputRedirected && !errorRedirected)
@@ -80,101 +80,101 @@ namespace BK7231Flasher
 					AllocConsole();
 				Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
 				Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
-            }
+			}
 
-            Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
-            Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
+			Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
+			Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
 
-            if (!Directory.Exists("backups"))
-            {
-                Directory.CreateDirectory("backups");
-            }
+			if (!Directory.Exists("backups"))
+			{
+				Directory.CreateDirectory("backups");
+			}
 
-            var operation = CliOperation.None;
-            string port = null;
-            int baud = 921600;
-            string chipName = null;
-            int ofs = -1;
-            int len = -1;
-            string outputName = "cliBackup";
-            string writeFile = null;
+			var operation = CliOperation.None;
+			string port = null;
+			int baud = 921600;
+			string chipName = null;
+			int ofs = -1;
+			int len = -1;
+			string outputName = "cliBackup";
+			string writeFile = null;
 			bool legacyMode = false;
 			bool acknowledgeSv6x66BankBOverwrite = false;
 			bool sv6x66RestoreDiagnostics = false;
 			bool acknowledgeSv6x66FullRestore = false;
-            string tuyaInputFile = null;
-            string tuyaOutputFile = null;
+			string tuyaInputFile = null;
+			string tuyaOutputFile = null;
 
-            // Parse arguments (esptool-style + legacy aliases)
-            for (int i = 0; i < args.Length; i++)
-            {
-                string arg = args[i].ToLowerInvariant();
-                switch (arg)
-                {
-                    // --- Commands (esptool-style positional) ---
-                    case "fread":       // full flash read (no esptool equivalent)
-                    case "-read":       // legacy alias
-                        operation = CliOperation.Read;
-                        break;
-                    case "fwrite":      // full flash write (no esptool equivalent)
-                    case "-write":      // legacy alias
-                        operation = CliOperation.Write;
-                        if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                            writeFile = args[++i];
-                        break;
-                    case "read_flash":  // esptool read_flash
-                    case "-cread":      // legacy alias
-                        operation = CliOperation.CustomRead;
-                        break;
-                    case "write_flash": // esptool write_flash
-                    case "-cwrite":     // legacy alias
-                        operation = CliOperation.CustomWrite;
-                        if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                            writeFile = args[++i];
-                        break;
-                    case "test":        // write/read/verify test (no esptool equivalent)
-                    case "-test":       // legacy alias
-                        operation = CliOperation.Test;
-                        break;
-                    case "tuyaconfig":  // extract Tuya config from binary dump (offline, no serial)
-                        operation = CliOperation.TuyaConfig;
-                        if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                            tuyaInputFile = args[++i];
-                        if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                            tuyaOutputFile = args[++i];
-                        break;
+			// Parse arguments (esptool-style + legacy aliases)
+			for (int i = 0; i < args.Length; i++)
+			{
+				string arg = args[i].ToLowerInvariant();
+				switch (arg)
+				{
+					// --- Commands (esptool-style positional) ---
+					case "fread":       // full flash read (no esptool equivalent)
+					case "-read":       // legacy alias
+						operation = CliOperation.Read;
+						break;
+					case "fwrite":      // full flash write (no esptool equivalent)
+					case "-write":      // legacy alias
+						operation = CliOperation.Write;
+						if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
+							writeFile = args[++i];
+						break;
+					case "read_flash":  // esptool read_flash
+					case "-cread":      // legacy alias
+						operation = CliOperation.CustomRead;
+						break;
+					case "write_flash": // esptool write_flash
+					case "-cwrite":     // legacy alias
+						operation = CliOperation.CustomWrite;
+						if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
+							writeFile = args[++i];
+						break;
+					case "test":        // write/read/verify test (no esptool equivalent)
+					case "-test":       // legacy alias
+						operation = CliOperation.Test;
+						break;
+					case "tuyaconfig":  // extract Tuya config from binary dump (offline, no serial)
+						operation = CliOperation.TuyaConfig;
+						if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
+							tuyaInputFile = args[++i];
+						if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
+							tuyaOutputFile = args[++i];
+						break;
 
-                    // --- Options (esptool-style double-dash + legacy) ---
-                    case "--port":
-                    case "-p":
-                    case "-port":       // legacy alias
-                        if (i + 1 < args.Length) port = args[++i];
-                        break;
-                    case "--baud":
-                    case "-b":
-                    case "-baud":       // legacy alias
-                        if (i + 1 < args.Length) int.TryParse(args[++i], out baud);
-                        break;
-                    case "--chip":
-                    case "-chip":       // legacy alias
-                        if (i + 1 < args.Length) chipName = args[++i];
-                        break;
-                    case "--addr":
-                    case "-ofs":        // legacy alias
-                        if (i + 1 < args.Length) ofs = ParseInt(args[++i]);
-                        break;
-                    case "--size":
-                    case "-len":        // legacy alias
-                        if (i + 1 < args.Length) len = ParseInt(args[++i]);
-                        break;
-                    case "--out":
-                    case "-out":        // legacy alias
-                        if (i + 1 < args.Length) outputName = args[++i];
-                        break;
-                    case "--no-stub":
-                    case "-legacy":     // legacy alias
-                        legacyMode = true;
-                        break;
+					// --- Options (esptool-style double-dash + legacy) ---
+					case "--port":
+					case "-p":
+					case "-port":       // legacy alias
+						if (i + 1 < args.Length) port = args[++i];
+						break;
+					case "--baud":
+					case "-b":
+					case "-baud":       // legacy alias
+						if (i + 1 < args.Length) int.TryParse(args[++i], out baud);
+						break;
+					case "--chip":
+					case "-chip":       // legacy alias
+						if (i + 1 < args.Length) chipName = args[++i];
+						break;
+					case "--addr":
+					case "-ofs":        // legacy alias
+						if (i + 1 < args.Length) ofs = ParseInt(args[++i]);
+						break;
+					case "--size":
+					case "-len":        // legacy alias
+						if (i + 1 < args.Length) len = ParseInt(args[++i]);
+						break;
+					case "--out":
+					case "-out":        // legacy alias
+						if (i + 1 < args.Length) outputName = args[++i];
+						break;
+					case "--no-stub":
+					case "-legacy":     // legacy alias
+						legacyMode = true;
+						break;
 					case "--ack-sv6x66-bank-b-overwrite":
 						acknowledgeSv6x66BankBOverwrite = true;
 						break;
@@ -184,81 +184,81 @@ namespace BK7231Flasher
 					case "--ack-sv6x66-full-restore":
 						acknowledgeSv6x66FullRestore = true;
 						break;
-                    case "--help":
-                    case "-help":
-                    case "-h":
-                    case "/?":
-                        operation = CliOperation.Help;
-                        break;
-                    default:
-                        Console.Error.WriteLine($"Unknown argument: {args[i]}");
-                        break;
-                }
+					case "--help":
+					case "-help":
+					case "-h":
+					case "/?":
+						operation = CliOperation.Help;
+						break;
+					default:
+						Console.Error.WriteLine($"Unknown argument: {args[i]}");
+						break;
+				}
 			}
 
-            if (operation == CliOperation.Help || operation == CliOperation.None)
-            {
-                PrintHelp();
-                Environment.Exit(operation == CliOperation.Help ? 0 : 1);
-                return;
-            }
+			if (operation == CliOperation.Help || operation == CliOperation.None)
+			{
+				PrintHelp();
+				Environment.Exit(operation == CliOperation.Help ? 0 : 1);
+				return;
+			}
 
-            // TuyaConfig is an offline file-only operation — no serial port or chip needed.
-            if (operation == CliOperation.TuyaConfig)
-            {
-                if (string.IsNullOrEmpty(tuyaInputFile) || string.IsNullOrEmpty(tuyaOutputFile))
-                {
-                    Console.Error.WriteLine("Error: tuyaconfig requires two arguments: <input.bin> <output.json>");
-                    Console.Error.WriteLine("Usage: OpenIOT_flasher.exe tuyaconfig <input.bin> <output.json>");
-                    Environment.Exit(1);
-                    return;
-                }
-                int tuyaExitCode = DoTuyaConfig(tuyaInputFile, tuyaOutputFile);
-                Environment.Exit(tuyaExitCode);
-                return;
-            }
+			// TuyaConfig is an offline file-only operation — no serial port or chip needed.
+			if (operation == CliOperation.TuyaConfig)
+			{
+				if (string.IsNullOrEmpty(tuyaInputFile) || string.IsNullOrEmpty(tuyaOutputFile))
+				{
+					Console.Error.WriteLine("Error: tuyaconfig requires two arguments: <input.bin> <output.json>");
+					Console.Error.WriteLine("Usage: OpenIOT_flasher.exe tuyaconfig <input.bin> <output.json>");
+					Environment.Exit(1);
+					return;
+				}
+				int tuyaExitCode = DoTuyaConfig(tuyaInputFile, tuyaOutputFile);
+				Environment.Exit(tuyaExitCode);
+				return;
+			}
 
-            if (string.IsNullOrEmpty(chipName))
-            {
-                Console.Error.WriteLine("Error: --chip is required. Use --help for usage.");
-                Environment.Exit(1);
-                return;
-            }
+			if (string.IsNullOrEmpty(chipName))
+			{
+				Console.Error.WriteLine("Error: --chip is required. Use --help for usage.");
+				Environment.Exit(1);
+				return;
+			}
 
-            if ((operation == CliOperation.Write || operation == CliOperation.CustomWrite) && string.IsNullOrEmpty(writeFile))
-            {
-                Console.Error.WriteLine("Error: File path is required for write operations.");
-                Environment.Exit(1);
-                return;
-            }
+			if ((operation == CliOperation.Write || operation == CliOperation.CustomWrite) && string.IsNullOrEmpty(writeFile))
+			{
+				Console.Error.WriteLine("Error: File path is required for write operations.");
+				Environment.Exit(1);
+				return;
+			}
 
-            if ((operation == CliOperation.CustomRead || operation == CliOperation.CustomWrite || operation == CliOperation.Test) && (ofs < 0 || len <= 0))
-            {
-                Console.Error.WriteLine("Error: --addr and --size are required for read_flash/write_flash/test operations. Use --help for usage.");
-                Environment.Exit(1);
-                return;
-            }
+			if ((operation == CliOperation.CustomRead || operation == CliOperation.CustomWrite || operation == CliOperation.Test) && (ofs < 0 || len <= 0))
+			{
+				Console.Error.WriteLine("Error: --addr and --size are required for read_flash/write_flash/test operations. Use --help for usage.");
+				Environment.Exit(1);
+				return;
+			}
 
-            // Resolve chip type
-            if (chipName.Equals("BL618", StringComparison.OrdinalIgnoreCase))
-            {
-                // BL618 uses the BL616 bootrom-compatible flow in this tool.
-                chipName = nameof(BKType.BL616);
-            }
+			// Resolve chip type
+			if (chipName.Equals("BL618", StringComparison.OrdinalIgnoreCase))
+			{
+				// BL618 uses the BL616 bootrom-compatible flow in this tool.
+				chipName = nameof(BKType.BL616);
+			}
 
-            BKType chipType;
-            if (!Enum.TryParse(chipName, true, out chipType) || chipType == BKType.Invalid || chipType == BKType.Detect)
-            {
-                Console.Error.WriteLine($"Error: Unknown chip type '{chipName}'. Available types:");
-                foreach (var t in Enum.GetValues(typeof(BKType)))
-                {
-                    if ((BKType)t != BKType.Invalid && (BKType)t != BKType.Detect)
-                        Console.Error.Write($"  {t}");
-                }
-                Console.Error.WriteLine();
-                Environment.Exit(1);
-                return;
-            }
+			BKType chipType;
+			if (!Enum.TryParse(chipName, true, out chipType) || chipType == BKType.Invalid || chipType == BKType.Detect)
+			{
+				Console.Error.WriteLine($"Error: Unknown chip type '{chipName}'. Available types:");
+				foreach (var t in Enum.GetValues(typeof(BKType)))
+				{
+					if ((BKType)t != BKType.Invalid && (BKType)t != BKType.Detect)
+						Console.Error.Write($"  {t}");
+				}
+				Console.Error.WriteLine();
+				Environment.Exit(1);
+				return;
+			}
 
 			if (!ValidateSv6x66Arguments(operation, baud, chipType,
 				acknowledgeSv6x66BankBOverwrite, acknowledgeSv6x66FullRestore))
@@ -288,101 +288,101 @@ namespace BK7231Flasher
 				writeFile = preparedPath;
 			}
 
-            // Validate required arguments after all pre-serial safety gates.
-            if (string.IsNullOrEmpty(port) &&
-                chipType != BKType.BekenSPI && chipType != BKType.GenericSPI)
-            {
-                Console.WriteLine("[AutoSelect] No port argument, attempting auto-selection...");
-                port = GetFirstAvailablePort();
-                if (port != null)
-                {
-                    Console.WriteLine($"No port specified, auto-selected: {port}");
-                    Thread.Sleep(500); // Give time for port to close properly
-                }
-                else
-                {
-                    Console.Error.WriteLine("Error: --port is required. Use --help for usage.");
-                    Environment.Exit(1);
-                    return;
-                }
-            }
-            if (Requires4KAlignedRange(chipType)
-                && (operation == CliOperation.CustomRead || operation == CliOperation.CustomWrite || operation == CliOperation.Test)
-                && ((ofs % BK7231Flasher.SECTOR_SIZE) != 0 || (len % BK7231Flasher.SECTOR_SIZE) != 0))
-            {
-                Console.Error.WriteLine("Error: Custom operations for this chip require --addr and --size to be 0x1000-aligned.");
-                Environment.Exit(1);
-                return;
-            }
+			// Validate required arguments after all pre-serial safety gates.
+			if (string.IsNullOrEmpty(port) &&
+				chipType != BKType.BekenSPI && chipType != BKType.GenericSPI)
+			{
+				Console.WriteLine("[AutoSelect] No port argument, attempting auto-selection...");
+				port = GetFirstAvailablePort();
+				if (port != null)
+				{
+					Console.WriteLine($"No port specified, auto-selected: {port}");
+					Thread.Sleep(500); // Give time for port to close properly
+				}
+				else
+				{
+					Console.Error.WriteLine("Error: --port is required. Use --help for usage.");
+					Environment.Exit(1);
+					return;
+				}
+			}
+			if (Requires4KAlignedRange(chipType)
+				&& (operation == CliOperation.CustomRead || operation == CliOperation.CustomWrite || operation == CliOperation.Test)
+				&& ((ofs % BK7231Flasher.SECTOR_SIZE) != 0 || (len % BK7231Flasher.SECTOR_SIZE) != 0))
+			{
+				Console.Error.WriteLine("Error: Custom operations for this chip require --addr and --size to be 0x1000-aligned.");
+				Environment.Exit(1);
+				return;
+			}
 
 			int exitCode = ExecuteOperation(operation, port ?? "", baud, chipType, ofs, len, outputName, writeFile,
 				legacyMode, sv6x66RestoreImage, sv6x66RestoreSha256, sv6x66RestoreDiagnostics);
-            Environment.Exit(exitCode);
-        }
+			Environment.Exit(exitCode);
+		}
 
 		static int ExecuteOperation(CliOperation operation, string port, int baud, BKType chipType,
 			int ofs, int len, string outputName, string writeFile, bool legacyMode,
 			byte[] sv6x66RestoreImage, string sv6x66RestoreSha256, bool sv6x66RestoreDiagnostics)
-        {
-            var logger = new ConsoleLogListener();
-            var cts = new CancellationTokenSource();
+		{
+			var logger = new ConsoleLogListener();
+			var cts = new CancellationTokenSource();
 
-            // Handle Ctrl+C
-            Console.CancelKeyPress += (sender, e) =>
-            {
-                e.Cancel = true;
-                Console.WriteLine("\nCancelling operation...");
-                cts.Cancel();
-            };
+			// Handle Ctrl+C
+			Console.CancelKeyPress += (sender, e) =>
+			{
+				e.Cancel = true;
+				Console.WriteLine("\nCancelling operation...");
+				cts.Cancel();
+			};
 
-            BaseFlasher flasher = CreateFlasher(chipType, cts.Token);
+			BaseFlasher flasher = CreateFlasher(chipType, cts.Token);
 			if (flasher is SV6x66Flasher sv6x66DiagnosticsTarget)
 			{
 				sv6x66DiagnosticsTarget.RestoreDiagnosticsEnabled = sv6x66RestoreDiagnostics;
 				sv6x66DiagnosticsTarget.TechnicalLoggingEnabled = true;
 			}
-            flasher.setBasic(logger, port, chipType, baud);
+			flasher.setBasic(logger, port, chipType, baud);
 			if (flasher is ESPFlasher espFlasher)
-            {
-                espFlasher.LegacyMode = legacyMode;
-            }
+			{
+				espFlasher.LegacyMode = legacyMode;
+			}
 
-            try
-            {
-                switch (operation)
-                {
-                    case CliOperation.Read:
-                        return DoRead(flasher, chipType, outputName);
+			try
+			{
+				switch (operation)
+				{
+					case CliOperation.Read:
+						return DoRead(flasher, chipType, outputName);
 
 					case CliOperation.Write:
 						return DoWrite(flasher, chipType, writeFile,
 							sv6x66RestoreImage, sv6x66RestoreSha256);
 
-                    case CliOperation.CustomRead:
-                        return DoCustomRead(flasher, chipType, ofs, len, outputName);
+					case CliOperation.CustomRead:
+						return DoCustomRead(flasher, chipType, ofs, len, outputName);
 
-                    case CliOperation.CustomWrite:
-                        return DoCustomWrite(flasher, chipType, ofs, len, writeFile);
+					case CliOperation.CustomWrite:
+						return DoCustomWrite(flasher, chipType, ofs, len, writeFile);
 
-                    case CliOperation.Test:
-                        return DoTest(flasher, chipType, ofs, len);
+					case CliOperation.Test:
+						return DoTest(flasher, chipType, ofs, len);
 
-                    default:
-                        Console.Error.WriteLine("Error: Unknown operation.");
-                        return 1;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"\nError: {ex.Message}");
-                return 1;
-            }
-            finally
-            {
-                flasher.closePort();
-                flasher.Dispose();
-            }
-        }
+					default:
+						Console.Error.WriteLine("Error: Unknown operation.");
+						return 1;
+				}
+			}
+			catch (Exception ex)
+			{
+				Console.Error.WriteLine($"\nError: {ex.Message}");
+				return 1;
+			}
+			finally
+			{
+				flasher.closePort();
+				flasher.Dispose();
+			}
+		}
 
 		static int DoRead(BaseFlasher flasher, BKType chipType, string outputName)
 		{
@@ -395,22 +395,22 @@ namespace BK7231Flasher
 				Console.WriteLine("Starting full flash read...");
 			}
 
-            flasher.setBackupName(outputName);
+			flasher.setBackupName(outputName);
 
-            int startSector;
-            int sectors;
+			int startSector;
+			int sectors;
 
-            if (chipType == BKType.BK7252)
-            {
-                startSector = 0x0;
-                sectors = BK7231Flasher.FLASH_SIZE / BK7231Flasher.SECTOR_SIZE;
-                Console.WriteLine("BK7252 mode - full QIO backup will use BK7252U mapped reads.");
-            }
-            else
-            {
-                startSector = 0x0;
-                sectors = BK7231Flasher.FLASH_SIZE / BK7231Flasher.SECTOR_SIZE;
-            }
+			if (chipType == BKType.BK7252)
+			{
+				startSector = 0x0;
+				sectors = BK7231Flasher.FLASH_SIZE / BK7231Flasher.SECTOR_SIZE;
+				Console.WriteLine("BK7252 mode - full QIO backup will use BK7252U mapped reads.");
+			}
+			else
+			{
+				startSector = 0x0;
+				sectors = BK7231Flasher.FLASH_SIZE / BK7231Flasher.SECTOR_SIZE;
+			}
 
 			flasher.doRead(startSector, sectors, true);
 			if (flasher is SV6x66Flasher sv6x66Flasher && !sv6x66Flasher.LastOperationSucceeded)
@@ -419,16 +419,16 @@ namespace BK7231Flasher
 				return 1;
 			}
 			if (flasher.saveReadResult(startSector))
-            {
-                Console.WriteLine("\nRead completed successfully.");
-                return 0;
-            }
-            else
-            {
-                Console.Error.WriteLine("\nRead completed but saving failed.");
-                return 1;
-            }
-        }
+			{
+				Console.WriteLine("\nRead completed successfully.");
+				return 0;
+			}
+			else
+			{
+				Console.Error.WriteLine("\nRead completed but saving failed.");
+				return 1;
+			}
+		}
 
 		static int DoWrite(BaseFlasher flasher, BKType chipType, string writeFile,
 			byte[] sv6x66RestoreImage, string sv6x66RestoreSha256)
@@ -456,56 +456,56 @@ namespace BK7231Flasher
 			}
 
 			if (!File.Exists(writeFile))
-            {
-                Console.Error.WriteLine($"Error: File not found: {writeFile}");
-                return 1;
-            }
+			{
+				Console.Error.WriteLine($"Error: File not found: {writeFile}");
+				return 1;
+			}
 
-            Console.WriteLine($"Starting write from {writeFile}...");
+			Console.WriteLine($"Starting write from {writeFile}...");
 
-            int startSector;
-            int sectors;
+			int startSector;
+			int sectors;
 
-            switch (chipType)
-            {
-                case BKType.BK7231T:
-                case BKType.BK7231U:
-                case BKType.BK7252:
-                    startSector = BK7231Flasher.BOOTLOADER_SIZE;
-                    break;
-                default:
-                    startSector = 0;
-                    break;
-            }
-            sectors = BK7231Flasher.FLASH_SIZE / BK7231Flasher.SECTOR_SIZE;
+			switch (chipType)
+			{
+				case BKType.BK7231T:
+				case BKType.BK7231U:
+				case BKType.BK7252:
+					startSector = BK7231Flasher.BOOTLOADER_SIZE;
+					break;
+				default:
+					startSector = 0;
+					break;
+			}
+			sectors = BK7231Flasher.FLASH_SIZE / BK7231Flasher.SECTOR_SIZE;
 
-            flasher.doReadAndWrite(startSector, sectors, writeFile, WriteMode.OnlyWrite);
+			flasher.doReadAndWrite(startSector, sectors, writeFile, WriteMode.OnlyWrite);
 
-            if (DidBekenWriteSucceed(flasher) == false)
-            {
-                Console.Error.WriteLine("\nWrite failed.");
-                return 1;
-            }
+			if (DidBekenWriteSucceed(flasher) == false)
+			{
+				Console.Error.WriteLine("\nWrite failed.");
+				return 1;
+			}
 
-            Console.WriteLine("\nWrite completed successfully.");
-            return 0;
-        }
+			Console.WriteLine("\nWrite completed successfully.");
+			return 0;
+		}
 
-        static bool IsBekenUartPlatform(BKType chipType)
-        {
-            switch (chipType)
-            {
-                case BKType.BK7231M:
-                case BKType.BK7231N:
-                case BKType.BK7231T:
-                case BKType.BK7231U:
-                case BKType.BK7236:
-                case BKType.BK7238:
-                case BKType.BK7239N:
-                case BKType.BK7252:
-                case BKType.BK7252N:
-                case BKType.BK7258:
-                    return true;
+		static bool IsBekenUartPlatform(BKType chipType)
+		{
+			switch (chipType)
+			{
+				case BKType.BK7231M:
+				case BKType.BK7231N:
+				case BKType.BK7231T:
+				case BKType.BK7231U:
+				case BKType.BK7236:
+				case BKType.BK7238:
+				case BKType.BK7239N:
+				case BKType.BK7252:
+				case BKType.BK7252N:
+				case BKType.BK7258:
+					return true;
 				default:
 					return false;
 			}
@@ -584,359 +584,359 @@ namespace BK7231Flasher
 			}
 		}
 
-        static bool Requires4KAlignedRange(BKType chipType)
-        {
-            return IsBekenUartPlatform(chipType)
-                || chipType == BKType.BekenSPI
-                || chipType == BKType.GenericSPI;
-        }
+		static bool Requires4KAlignedRange(BKType chipType)
+		{
+			return IsBekenUartPlatform(chipType)
+				|| chipType == BKType.BekenSPI
+				|| chipType == BKType.GenericSPI;
+		}
 
-        static bool DidBekenWriteSucceed(BaseFlasher flasher)
-        {
-            if (flasher is BK7231Flasher bkFlasher)
-            {
-                return bkFlasher.LastOperationSucceeded;
-            }
-            return true;
-        }
+		static bool DidBekenWriteSucceed(BaseFlasher flasher)
+		{
+			if (flasher is BK7231Flasher bkFlasher)
+			{
+				return bkFlasher.LastOperationSucceeded;
+			}
+			return true;
+		}
 
-        /// <summary>
-        /// Returns true for chips whose flasher expects a sector INDEX (multiplied internally by SECTOR_SIZE)
-        /// rather than a raw byte offset.
-        /// </summary>
-        static bool UsesSectorIndex(BKType chipType)
-        {
-            switch (chipType)
-            {
-                case BKType.RTL8720D:
-                case BKType.RTL87X0C:
-                case BKType.RTL8721DA:
-                case BKType.RTL8720E:
-                case BKType.ESP32:
-                case BKType.ESP32S2:
-                case BKType.ESP32C2:
-                case BKType.ESP32C3:
-                case BKType.ESP32C5:
-                case BKType.ESP32C6:
-                case BKType.ESP32C61:
-                case BKType.ESP32S3:
-                case BKType.ESP8266:
-                case BKType.LN882H:
-                case BKType.LN8825:
-                case BKType.XR809:
-                case BKType.XR806:
-                case BKType.XR872:
-                    return true;
-                default:
-                    return false;
-            }
-        }
+		/// <summary>
+		/// Returns true for chips whose flasher expects a sector INDEX (multiplied internally by SECTOR_SIZE)
+		/// rather than a raw byte offset.
+		/// </summary>
+		static bool UsesSectorIndex(BKType chipType)
+		{
+			switch (chipType)
+			{
+				case BKType.RTL8720D:
+				case BKType.RTL87X0C:
+				case BKType.RTL8721DA:
+				case BKType.RTL8720E:
+				case BKType.ESP32:
+				case BKType.ESP32S2:
+				case BKType.ESP32C2:
+				case BKType.ESP32C3:
+				case BKType.ESP32C5:
+				case BKType.ESP32C6:
+				case BKType.ESP32C61:
+				case BKType.ESP32S3:
+				case BKType.ESP8266:
+				case BKType.LN882H:
+				case BKType.LN8825:
+				case BKType.XR809:
+				case BKType.XR806:
+				case BKType.XR872:
+					return true;
+				default:
+					return false;
+			}
+		}
 
-        static int ToStartSector(BKType chipType, int ofs)
-        {
-            return UsesSectorIndex(chipType) ? ofs / BK7231Flasher.SECTOR_SIZE : ofs;
-        }
+		static int ToStartSector(BKType chipType, int ofs)
+		{
+			return UsesSectorIndex(chipType) ? ofs / BK7231Flasher.SECTOR_SIZE : ofs;
+		}
 
-        static int DoCustomRead(BaseFlasher flasher, BKType chipType, int ofs, int len, string outputName)
-        {
-            Console.WriteLine($"Starting custom read: offset=0x{ofs:X}, length=0x{len:X}...");
+		static int DoCustomRead(BaseFlasher flasher, BKType chipType, int ofs, int len, string outputName)
+		{
+			Console.WriteLine($"Starting custom read: offset=0x{ofs:X}, length=0x{len:X}...");
 
-            flasher.setBackupName(outputName);
+			flasher.setBackupName(outputName);
 
-            int startSector = ToStartSector(chipType, ofs);
-            int sectors = len / BK7231Flasher.SECTOR_SIZE;
+			int startSector = ToStartSector(chipType, ofs);
+			int sectors = len / BK7231Flasher.SECTOR_SIZE;
 
-            flasher.doRead(startSector, sectors, false);
+			flasher.doRead(startSector, sectors, false);
 
-            if (flasher.saveReadResult(startSector))
-            {
-                Console.WriteLine("\nCustom read completed successfully.");
-                return 0;
-            }
-            else
-            {
-                Console.Error.WriteLine("\nCustom read completed but saving failed.");
-                return 1;
-            }
-        }
+			if (flasher.saveReadResult(startSector))
+			{
+				Console.WriteLine("\nCustom read completed successfully.");
+				return 0;
+			}
+			else
+			{
+				Console.Error.WriteLine("\nCustom read completed but saving failed.");
+				return 1;
+			}
+		}
 
-        static int DoCustomWrite(BaseFlasher flasher, BKType chipType, int ofs, int len, string writeFile)
-        {
-            if (!File.Exists(writeFile))
-            {
-                Console.Error.WriteLine($"Error: File not found: {writeFile}");
-                return 1;
-            }
+		static int DoCustomWrite(BaseFlasher flasher, BKType chipType, int ofs, int len, string writeFile)
+		{
+			if (!File.Exists(writeFile))
+			{
+				Console.Error.WriteLine($"Error: File not found: {writeFile}");
+				return 1;
+			}
 
-            Console.WriteLine($"Starting custom write: offset=0x{ofs:X}, length=0x{len:X}, file={writeFile}...");
+			Console.WriteLine($"Starting custom write: offset=0x{ofs:X}, length=0x{len:X}, file={writeFile}...");
 
-            int startSector = ToStartSector(chipType, ofs);
-            int sectors = len / BK7231Flasher.SECTOR_SIZE;
+			int startSector = ToStartSector(chipType, ofs);
+			int sectors = len / BK7231Flasher.SECTOR_SIZE;
 
-            flasher.setCustomWriteMode(true);
-            flasher.doReadAndWrite(startSector, sectors, writeFile, WriteMode.OnlyWrite);
+			flasher.setCustomWriteMode(true);
+			flasher.doReadAndWrite(startSector, sectors, writeFile, WriteMode.OnlyWrite);
 
-            if (DidBekenWriteSucceed(flasher) == false)
-            {
-                Console.Error.WriteLine("\nCustom write failed.");
-                return 1;
-            }
+			if (DidBekenWriteSucceed(flasher) == false)
+			{
+				Console.Error.WriteLine("\nCustom write failed.");
+				return 1;
+			}
 
-            Console.WriteLine("\nCustom write completed successfully.");
-            return 0;
-        }
+			Console.WriteLine("\nCustom write completed successfully.");
+			return 0;
+		}
 
-        static int DoTest(BaseFlasher flasher, BKType chipType, int ofs, int len)
-        {
-            Console.WriteLine($"Starting Read/Write/Verify test at offset 0x{ofs:X}, length 0x{len:X}...");
-            bool isBekenUartTest = IsBekenUartPlatform(chipType);
+		static int DoTest(BaseFlasher flasher, BKType chipType, int ofs, int len)
+		{
+			Console.WriteLine($"Starting Read/Write/Verify test at offset 0x{ofs:X}, length 0x{len:X}...");
+			bool isBekenUartTest = IsBekenUartPlatform(chipType);
 
-            byte[] testPattern = new byte[len];
-            for (int i = 0; i < len; i++)
-            {
-                testPattern[i] = (byte)(i % 256);
-            }
+			byte[] testPattern = new byte[len];
+			for (int i = 0; i < len; i++)
+			{
+				testPattern[i] = (byte)(i % 256);
+			}
 
-            string tempFileName = isBekenUartTest
-                ? "bt_test_pattern_" + Guid.NewGuid().ToString("N") + ".bin"
-                : "bt_test_pattern.bin";
-            string tempFile = Path.Combine(Path.GetTempPath(), tempFileName);
+			string tempFileName = isBekenUartTest
+				? "bt_test_pattern_" + Guid.NewGuid().ToString("N") + ".bin"
+				: "bt_test_pattern.bin";
+			string tempFile = Path.Combine(Path.GetTempPath(), tempFileName);
 
-            try
-            {
-                File.WriteAllBytes(tempFile, testPattern);
-                int startSector = ToStartSector(chipType, ofs);
-                int sectors = len / BK7231Flasher.SECTOR_SIZE;
+			try
+			{
+				File.WriteAllBytes(tempFile, testPattern);
+				int startSector = ToStartSector(chipType, ofs);
+				int sectors = len / BK7231Flasher.SECTOR_SIZE;
 
-                Console.WriteLine("Step 1/3: Writing pattern...");
-                flasher.doReadAndWrite(startSector, sectors, tempFile, WriteMode.OnlyWrite);
-                if (DidBekenWriteSucceed(flasher) == false)
-                {
-                    Console.Error.WriteLine("Error: Pattern write failed.");
-                    return 1;
-                }
+				Console.WriteLine("Step 1/3: Writing pattern...");
+				flasher.doReadAndWrite(startSector, sectors, tempFile, WriteMode.OnlyWrite);
+				if (DidBekenWriteSucceed(flasher) == false)
+				{
+					Console.Error.WriteLine("Error: Pattern write failed.");
+					return 1;
+				}
 
-                Console.WriteLine("\nStep 2/3: Reading back...");
-                flasher.doRead(startSector, sectors, false);
+				Console.WriteLine("\nStep 2/3: Reading back...");
+				flasher.doRead(startSector, sectors, false);
 
-                Console.WriteLine("\nStep 3/3: Verifying...");
-                byte[] readData = flasher.getReadResult();
+				Console.WriteLine("\nStep 3/3: Verifying...");
+				byte[] readData = flasher.getReadResult();
 
-                if (readData == null || readData.Length == 0)
-                {
-                    Console.Error.WriteLine("Error: No read data available for verification.");
-                    return 1;
-                }
+				if (readData == null || readData.Length == 0)
+				{
+					Console.Error.WriteLine("Error: No read data available for verification.");
+					return 1;
+				}
 
-                if (isBekenUartTest && testPattern.Length != readData.Length)
-                {
-                    Console.Error.WriteLine($"FAIL: Verification length differs (pattern={testPattern.Length}, read={readData.Length}).");
-                    return 1;
-                }
+				if (isBekenUartTest && testPattern.Length != readData.Length)
+				{
+					Console.Error.WriteLine($"FAIL: Verification length differs (pattern={testPattern.Length}, read={readData.Length}).");
+					return 1;
+				}
 
-                int compareLen = Math.Min(testPattern.Length, readData.Length);
-                bool match = true;
-                int mismatchCount = 0;
-                for (int i = 0; i < compareLen; i++)
-                {
-                    if (testPattern[i] != readData[i])
-                    {
-                        if (mismatchCount < 5)
-                            Console.Error.WriteLine($"  Mismatch at 0x{i:X}: expected 0x{testPattern[i]:X2}, got 0x{readData[i]:X2}");
-                        match = false;
-                        mismatchCount++;
-                    }
-                }
+				int compareLen = Math.Min(testPattern.Length, readData.Length);
+				bool match = true;
+				int mismatchCount = 0;
+				for (int i = 0; i < compareLen; i++)
+				{
+					if (testPattern[i] != readData[i])
+					{
+						if (mismatchCount < 5)
+							Console.Error.WriteLine($"  Mismatch at 0x{i:X}: expected 0x{testPattern[i]:X2}, got 0x{readData[i]:X2}");
+						match = false;
+						mismatchCount++;
+					}
+				}
 
-                if (!match)
-                {
-                    Console.Error.WriteLine($"FAIL: Verification failed with {mismatchCount} mismatched byte(s).");
-                    return 1;
-                }
+				if (!match)
+				{
+					Console.Error.WriteLine($"FAIL: Verification failed with {mismatchCount} mismatched byte(s).");
+					return 1;
+				}
 
-                if (testPattern.Length != readData.Length)
-                {
-                    Console.WriteLine($"WARNING: Data matches but lengths differ (pattern={testPattern.Length}, read={readData.Length}).");
-                }
+				if (testPattern.Length != readData.Length)
+				{
+					Console.WriteLine($"WARNING: Data matches but lengths differ (pattern={testPattern.Length}, read={readData.Length}).");
+				}
 
-                Console.WriteLine("SUCCESS: Verification passed! Read data matches written pattern.");
-                return 0;
-            }
-            finally
-            {
-                if (File.Exists(tempFile)) File.Delete(tempFile);
-            }
-        }
+				Console.WriteLine("SUCCESS: Verification passed! Read data matches written pattern.");
+				return 0;
+			}
+			finally
+			{
+				if (File.Exists(tempFile)) File.Delete(tempFile);
+			}
+		}
 
-        static int DoTuyaConfig(string inputFile, string outputFile)
-        {
-            if (!File.Exists(inputFile))
-            {
-                Console.Error.WriteLine($"Error: Input file not found: {inputFile}");
-                return 1;
-            }
+		static int DoTuyaConfig(string inputFile, string outputFile)
+		{
+			if (!File.Exists(inputFile))
+			{
+				Console.Error.WriteLine($"Error: Input file not found: {inputFile}");
+				return 1;
+			}
 
-            Console.WriteLine($"Extracting Tuya config from: {inputFile}");
+			Console.WriteLine($"Extracting Tuya config from: {inputFile}");
 
-            try
-            {
-                var tc = new TuyaConfig();
-                if (tc.fromFile(inputFile) != false)
-                {
-                    if (tc.isLastBinaryOBKConfig())
-                    {
-                        Console.Error.WriteLine("Error: The file looks like an OBK config, not a Tuya one.");
-                        return 1;
-                    }
-                    if (tc.isLastBinaryFullOf0xff())
-                    {
-                        Console.Error.WriteLine("Error: The binary is an erased flash sector (full of 0xFF).");
-                        return 1;
-                    }
-                    Console.Error.WriteLine("Error: Failed to decrypt Tuya config. See messages above for details.");
-                    return 1;
-                }
+			try
+			{
+				var tc = new TuyaConfig();
+				if (tc.fromFile(inputFile) != false)
+				{
+					if (tc.isLastBinaryOBKConfig())
+					{
+						Console.Error.WriteLine("Error: The file looks like an OBK config, not a Tuya one.");
+						return 1;
+					}
+					if (tc.isLastBinaryFullOf0xff())
+					{
+						Console.Error.WriteLine("Error: The binary is an erased flash sector (full of 0xFF).");
+						return 1;
+					}
+					Console.Error.WriteLine("Error: Failed to decrypt Tuya config. See messages above for details.");
+					return 1;
+				}
 
-                bool classicExtractFailed = tc.extractKeys();
-                bool hasEnhancedFallback = classicExtractFailed && tc.hasEnhancedExtractionData();
+				bool classicExtractFailed = tc.extractKeys();
+				bool hasEnhancedFallback = classicExtractFailed && tc.hasEnhancedExtractionData();
 
-                if (classicExtractFailed && !hasEnhancedFallback)
-                {
-                    Console.Error.WriteLine("Error: Failed to extract Tuya keys from decrypted data.");
-                    return 1;
-                }
+				if (classicExtractFailed && !hasEnhancedFallback)
+				{
+					Console.Error.WriteLine("Error: Failed to extract Tuya keys from decrypted data.");
+					return 1;
+				}
 
-                string json = tc.getEnhancedExtractionText();
-                if (string.IsNullOrWhiteSpace(json))
-                    json = tc.getKeysAsJSON();
-                File.WriteAllText(outputFile, json, Encoding.UTF8);
+				string json = tc.getEnhancedExtractionText();
+				if (string.IsNullOrWhiteSpace(json))
+					json = tc.getKeysAsJSON();
+				File.WriteAllText(outputFile, json, Encoding.UTF8);
 
-                Console.WriteLine($"Tuya config JSON written to: {outputFile}");
-                return 0;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Error: {ex.Message}");
-                return 1;
-            }
-        }
+				Console.WriteLine($"Tuya config JSON written to: {outputFile}");
+				return 0;
+			}
+			catch (Exception ex)
+			{
+				Console.Error.WriteLine($"Error: {ex.Message}");
+				return 1;
+			}
+		}
 
-        static BaseFlasher CreateFlasher(BKType chipType, CancellationToken ct)
-        {
-            switch (chipType)
-            {
-                case BKType.RTL8710B:
-                case BKType.RTL8720D:
-                case BKType.RTL8721DA:
-                case BKType.RTL8720E:
-                    return new RTLNFlasher(ct);
-                case BKType.RTL87X0C:
-                    return new RTLZ2Flasher(ct);
-                case BKType.LN882H:
-                case BKType.LN8825:
-                    return new LN882HFlasher(ct);
-                case BKType.BL602:
-                case BKType.BL702:
-                case BKType.BL616:
-                    return new BL602Flasher(ct);
-                case BKType.TR6260:
-                    return new TR6260Flasher(ct);
-                case BKType.BekenSPI:
-                    return new SPIFlasher_Beken(ct);
-                case BKType.GenericSPI:
-                    return new SPIFlasher(ct);
-                case BKType.ECR6600:
-                    return new ECR6600Flasher(ct);
+		static BaseFlasher CreateFlasher(BKType chipType, CancellationToken ct)
+		{
+			switch (chipType)
+			{
+				case BKType.RTL8710B:
+				case BKType.RTL8720D:
+				case BKType.RTL8721DA:
+				case BKType.RTL8720E:
+					return new RTLNFlasher(ct);
+				case BKType.RTL87X0C:
+					return new RTLZ2Flasher(ct);
+				case BKType.LN882H:
+				case BKType.LN8825:
+					return new LN882HFlasher(ct);
+				case BKType.BL602:
+				case BKType.BL702:
+				case BKType.BL616:
+					return new BL602Flasher(ct);
+				case BKType.TR6260:
+					return new TR6260Flasher(ct);
+				case BKType.BekenSPI:
+					return new SPIFlasher_Beken(ct);
+				case BKType.GenericSPI:
+					return new SPIFlasher(ct);
+				case BKType.ECR6600:
+					return new ECR6600Flasher(ct);
 				case BKType.SV6X66:
 					return new SV6x66Flasher(ct);
-                case BKType.W600:
-                    return new W600Flasher(ct);
-                case BKType.W800:
-                    return new W800Flasher(ct);
-                case BKType.RDA5981:
-                    return new RDAFlasher(ct);
-                case BKType.XR809:
-                    return new XR809Flasher(ct);
-                case BKType.XR806:
-                    return new XR806Flasher(ct);
-                case BKType.XR872:
-                    return new XR872Flasher(ct);
-                case BKType.ESP32:
-                case BKType.ESP32S2:
-                case BKType.ESP32C2:
-                case BKType.ESP32C3:
-                case BKType.ESP32C5:
-                case BKType.ESP32C6:
-                case BKType.ESP32C61:
-                case BKType.ESP32S3:
-                case BKType.ESP8266:
-                    return new ESPFlasher(ct);
-                default:
-                    return new BK7231Flasher(ct);
-            }
-        }
+				case BKType.W600:
+					return new W600Flasher(ct);
+				case BKType.W800:
+					return new W800Flasher(ct);
+				case BKType.RDA5981:
+					return new RDAFlasher(ct);
+				case BKType.XR809:
+					return new XR809Flasher(ct);
+				case BKType.XR806:
+					return new XR806Flasher(ct);
+				case BKType.XR872:
+					return new XR872Flasher(ct);
+				case BKType.ESP32:
+				case BKType.ESP32S2:
+				case BKType.ESP32C2:
+				case BKType.ESP32C3:
+				case BKType.ESP32C5:
+				case BKType.ESP32C6:
+				case BKType.ESP32C61:
+				case BKType.ESP32S3:
+				case BKType.ESP8266:
+					return new ESPFlasher(ct);
+				default:
+					return new BK7231Flasher(ct);
+			}
+		}
 
-        static int ParseInt(string input)
-        {
-            if (input.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-            {
-                input = input.Substring(2);
-                return int.Parse(input, NumberStyles.HexNumber);
-            }
-            return int.Parse(input);
-        }
+		static int ParseInt(string input)
+		{
+			if (input.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+			{
+				input = input.Substring(2);
+				return int.Parse(input, NumberStyles.HexNumber);
+			}
+			return int.Parse(input);
+		}
 
-        static void PrintHelp()
-        {
-            Console.WriteLine("OpenIOT flasher - Command Line Mode");
-            Console.WriteLine();
-            Console.WriteLine("Usage: OpenIOT_flasher.exe [options] <command> [command options]");
-            Console.WriteLine();
-            Console.WriteLine("Commands:");
-            Console.WriteLine("  read_flash             Read flash region (requires --addr and --size)");
-            Console.WriteLine("  write_flash <file.bin>  Write to flash region (requires --addr and --size)");
-            Console.WriteLine("  fread                  Full flash read (backup entire chip)");
-            Console.WriteLine("  fwrite <file.bin>      Full flash write (write entire firmware)");
-            Console.WriteLine("  test                   Write/read/verify test (requires --addr and --size)");
-            Console.WriteLine("  tuyaconfig <in> <out>  Extract Tuya config JSON from binary dump (offline)");
-            Console.WriteLine();
-            Console.WriteLine("Required Options:");
-            Console.WriteLine("  --port, -p <COM3>      Serial port (not needed for SPI chips)");
-            Console.WriteLine("  --chip <BK7231N>       Chip type (BL618 alias: use BL616 or BL618)");
-            Console.WriteLine();
-            Console.WriteLine("Optional:");
-            Console.WriteLine("  --baud, -b <921600>    Baud rate (default: 921600)");
-            Console.WriteLine("  --addr <0x11000>       Start address (hex or decimal, for read_flash/write_flash)");
-            Console.WriteLine("  --size <0x1000>        Length in bytes (hex or decimal, for read_flash/write_flash)");
-            Console.WriteLine("  --out <name>           Output name for backup (default: cliBackup)");
+		static void PrintHelp()
+		{
+			Console.WriteLine("OpenIOT flasher - Command Line Mode");
+			Console.WriteLine();
+			Console.WriteLine("Usage: OpenIOT_flasher.exe [options] <command> [command options]");
+			Console.WriteLine();
+			Console.WriteLine("Commands:");
+			Console.WriteLine("  read_flash             Read flash region (requires --addr and --size)");
+			Console.WriteLine("  write_flash <file.bin>  Write to flash region (requires --addr and --size)");
+			Console.WriteLine("  fread                  Full flash read (backup entire chip)");
+			Console.WriteLine("  fwrite <file.bin>      Full flash write (write entire firmware)");
+			Console.WriteLine("  test                   Write/read/verify test (requires --addr and --size)");
+			Console.WriteLine("  tuyaconfig <in> <out>  Extract Tuya config JSON from binary dump (offline)");
+			Console.WriteLine();
+			Console.WriteLine("Required Options:");
+			Console.WriteLine("  --port, -p <COM3>      Serial port (not needed for SPI chips)");
+			Console.WriteLine("  --chip <BK7231N>       Chip type (BL618 alias: use BL616 or BL618)");
+			Console.WriteLine();
+			Console.WriteLine("Optional:");
+			Console.WriteLine("  --baud, -b <921600>    Baud rate (default: 921600)");
+			Console.WriteLine("  --addr <0x11000>       Start address (hex or decimal, for read_flash/write_flash)");
+			Console.WriteLine("  --size <0x1000>        Length in bytes (hex or decimal, for read_flash/write_flash)");
+			Console.WriteLine("  --out <name>           Output name for backup (default: cliBackup)");
 			Console.WriteLine("  --ack-sv6x66-bank-b-overwrite");
 			Console.WriteLine("                         Legacy flag name: permits replacing inactive A or B for a normalized SV6x66 backup");
 			Console.WriteLine("                         Staging uses 115200 baud; --baud selects the subsequent flash-read rate");
 			Console.WriteLine("  --ack-sv6x66-full-restore");
 			Console.WriteLine("                         SV6x66 fwrite: recognized stock/OpenBeken factory target; restores the complete 2 MiB backup");
 			Console.WriteLine("  --sv6x66-restore-diagnostics  SV6X66 fwrite only: include internal result and phase timing records.");
-            Console.WriteLine("  --no-stub              Use legacy (ROM-only) mode for ESP8266/ESP32 family chips (disable stub flasher)");
-            Console.WriteLine();
-            Console.WriteLine("Examples:");
-            Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N fread --out mybackup");
+			Console.WriteLine("  --no-stub              Use legacy (ROM-only) mode for ESP8266/ESP32 family chips (disable stub flasher)");
+			Console.WriteLine();
+			Console.WriteLine("Examples:");
+			Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N fread --out mybackup");
 			Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N fwrite firmware.bin");
 			Console.WriteLine("  OpenIOT_flasher.exe --port COM5 --chip SV6X66 --baud 115200 --ack-sv6x66-bank-b-overwrite fread --out sv6_backup");
 			Console.WriteLine("  OpenIOT_flasher.exe --port COM5 --chip SV6X66 --baud 115200 --ack-sv6x66-full-restore fwrite backups\\readResult_SV6X66_device.bin");
-            Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N read_flash --addr 0x11000 --size 0x1000");
-            Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N write_flash data.bin --addr 0x0 --size 0x1000");
-            Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N test --addr 0x11000 --size 0x1000");
-            Console.WriteLine("  OpenIOT_flasher.exe tuyaconfig firmware_dump.bin tuya_config.json");
-            Console.WriteLine();
-            Console.WriteLine("Legacy aliases (backward compatible):");
-            Console.WriteLine("  -read, -write, -cread, -cwrite, -test, -port, -baud, -chip, -ofs, -len, -out, -legacy");
-            Console.WriteLine();
-            Console.WriteLine("Available chip types:");
-            foreach (var t in Enum.GetValues(typeof(BKType)))
-            {
-                if ((BKType)t != BKType.Invalid && (BKType)t != BKType.Detect)
-                    Console.Write($"  {t}");
-            }
-            Console.WriteLine();
-        }
-    }
+			Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N read_flash --addr 0x11000 --size 0x1000");
+			Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N write_flash data.bin --addr 0x0 --size 0x1000");
+			Console.WriteLine("  OpenIOT_flasher.exe --port COM3 --chip BK7231N test --addr 0x11000 --size 0x1000");
+			Console.WriteLine("  OpenIOT_flasher.exe tuyaconfig firmware_dump.bin tuya_config.json");
+			Console.WriteLine();
+			Console.WriteLine("Legacy aliases (backward compatible):");
+			Console.WriteLine("  -read, -write, -cread, -cwrite, -test, -port, -baud, -chip, -ofs, -len, -out, -legacy");
+			Console.WriteLine();
+			Console.WriteLine("Available chip types:");
+			foreach (var t in Enum.GetValues(typeof(BKType)))
+			{
+				if ((BKType)t != BKType.Invalid && (BKType)t != BKType.Detect)
+					Console.Write($"  {t}");
+			}
+			Console.WriteLine();
+		}
+	}
 }

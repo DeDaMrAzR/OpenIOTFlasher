@@ -6,10 +6,10 @@ using System.Windows.Forms;
 
 namespace BK7231Flasher
 {
-    class RichTextUtil
-    {
-        [DllImport("user32.dll")]
-        private static extern int SendMessage(IntPtr hWnd, int wMsg, int wParam, int lParam);
+	class RichTextUtil
+	{
+		[DllImport("user32.dll")]
+		private static extern int SendMessage(IntPtr hWnd, int wMsg, int wParam, int lParam);
 		[DllImport("user32.dll", EntryPoint = "SendMessageW")]
 		private static extern IntPtr SendMessage(IntPtr hWnd, int wMsg, IntPtr wParam, ref Point lParam);
 		[DllImport("user32.dll", EntryPoint = "SendMessageW")]
@@ -21,16 +21,16 @@ namespace BK7231Flasher
 			public int Left, Top, Right, Bottom;
 		}
 
-        [DllImport("user32.dll")]
-        private static extern bool RedrawWindow(IntPtr hWnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
+		[DllImport("user32.dll")]
+		private static extern bool RedrawWindow(IntPtr hWnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
 
-        private const uint RDW_INVALIDATE = 0x0001;
-        private const uint RDW_ERASE = 0x0004;
-        private const uint RDW_ALLCHILDREN = 0x0080;
-        private const uint RDW_FRAME = 0x0400;
+		private const uint RDW_INVALIDATE = 0x0001;
+		private const uint RDW_ERASE = 0x0004;
+		private const uint RDW_ALLCHILDREN = 0x0080;
+		private const uint RDW_FRAME = 0x0400;
 
-        private const int WM_VSCROLL = 0x115;
-        private const int SB_BOTTOM  = 7;
+		private const int WM_VSCROLL = 0x115;
+		private const int SB_BOTTOM  = 7;
 		private const int WM_SETREDRAW = 0x0B;
 		private const int EM_GETRECT = 0x00B2;
 		private const int EM_SETSCROLLPOS = 0x04DE;
@@ -102,18 +102,18 @@ namespace BK7231Flasher
 			box.ScrollToCaret();
 		}
 
-        public static void ReplaceCurrentLine(RichTextBox box, string text, Color color)
-        {
-            int lineStart = box.Text.LastIndexOf('\n');
-            lineStart = lineStart < 0 ? 0 : lineStart + 1;
+		public static void ReplaceCurrentLine(RichTextBox box, string text, Color color)
+		{
+			int lineStart = box.Text.LastIndexOf('\n');
+			lineStart = lineStart < 0 ? 0 : lineStart + 1;
 
-            box.SelectionStart = lineStart;
-            box.SelectionLength = box.TextLength - lineStart;
-            box.SelectionColor = color;
-            box.SelectedText = text;
-            box.SelectionColor = box.ForeColor;
+			box.SelectionStart = lineStart;
+			box.SelectionLength = box.TextLength - lineStart;
+			box.SelectionColor = color;
+			box.SelectedText = text;
+			box.SelectionColor = box.ForeColor;
 
-            SendMessage(box.Handle, WM_VSCROLL, SB_BOTTOM, 0);
-        }
-    }
+			SendMessage(box.Handle, WM_VSCROLL, SB_BOTTOM, 0);
+		}
+	}
 }
