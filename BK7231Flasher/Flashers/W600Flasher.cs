@@ -13,11 +13,13 @@ namespace BK7231Flasher
 	public class W600Flasher : BaseFlasher
 	{
 		private const int FlashSize = 0x100000;
+		private const int MaximumFlashSize = 2 * FlashSize;
 		private const int SecbootOffset = 0x2000;
 		private const int SecbootSize = 0xE000;
 		private const int HelperSectorOffset = SecbootOffset;
 		private const int HelperSectorSize = 0x1000;
 		private const int FlsHeaderSize = 56;
+		private const int SecbootProgrammedSize = SecbootSize - FlsHeaderSize;
 		private const int HelperTransferPayloadSize = HelperSectorSize - FlsHeaderSize;
 		private const uint FlashBase = 0x08000000;
 		private const uint HelperVectorAddress = 0x08002100;
@@ -39,7 +41,7 @@ namespace BK7231Flasher
 		private const byte ProtocolRead = 1;
 		private const byte ProtocolReturnToRom = 2;
 		private const byte ProtocolFlashId = 4;
-		private static readonly byte[] ReaderProtocolMarker = System.Text.Encoding.ASCII.GetBytes("W600RD30");
+		private static readonly byte[] ReaderProtocolMarker = System.Text.Encoding.ASCII.GetBytes("W600RD32");
 		private const int SecbootEntryTimeoutMs = 90000;
 		private const int HelperEntryTimeoutMs = 90000;
 		private const int RomEntryTimeoutMs = 15000;
@@ -63,6 +65,12 @@ namespace BK7231Flasher
 		byte[] flashID;
 		MemoryStream ms;
 		volatile bool secbootRecoveryRequired;
+		bool modifiedAcquisition;
+		bool primaryOnlyAcquisition;
+		bool unverifiedSecbootAcquisition;
+		byte[] helperGeometry;
+		uint lastHelperJedecId;
+		bool helperCleanupUnsafe;
 		string lastXmodemProgressText;
 
 		public W600Flasher(CancellationToken ct) : base(ct)
@@ -169,13 +177,15 @@ namespace BK7231Flasher
 			return false;
 		}
 
-		private byte[] ReadFlashIdWithoutErase()
+		private byte[] ReadFlashIdWithoutErase(bool recoveryExpected = true)
 		{
 			var res = ExecuteCommand(0x3C, null, 1, 10, isErrorExpected: true);
 			if(res == null || res.Length < 6 || res[0] != 'F' || res[1] != 'I' ||
 				res[2] != 'D' || res[3] != ':')
 			{
-				addErrorLine("W600 ROM flash-ID probe failed after the secboot transition; automatic recovery will be attempted.");
+				addErrorLine(recoveryExpected
+					? "W600 ROM flash-ID probe failed after the secboot transition; automatic recovery will be attempted."
+					: "W600 ROM flash-ID probe failed. No flash erase or program command was sent.");
 				return null;
 			}
 			try
@@ -222,14 +232,16 @@ namespace BK7231Flasher
 		}
 
 		private SecbootProfile WaitForSupportedSecboot(SecbootProfile[] profiles,
-			bool ignoreCancellation, int timeoutMs)
+			bool ignoreCancellation, int timeoutMs, out bool romReady)
 		{
+			romReady = false;
 			serial.BaudRate = 115200;
 			serial.DiscardInBuffer();
 			serial.DiscardOutBuffer();
 			var capture = new StringBuilder();
 			var sw = Stopwatch.StartNew();
 			long nextPrompt = 0;
+			int romCharacters = 0;
 			while(sw.ElapsedMilliseconds < timeoutMs && (ignoreCancellation || !isCancelled))
 			{
 				serial.Write(new byte[] { 0x1B }, 0, 1);
@@ -237,7 +249,10 @@ namespace BK7231Flasher
 				{
 					int value = serial.ReadByte();
 					if(value >= 0)
+					{
 						capture.Append((char)(byte)value);
+						romCharacters = value == 'C' || value == 'P' ? romCharacters + 1 : 0;
+					}
 				}
 				if(capture.Length > 1024)
 					capture.Remove(0, capture.Length - 512);
@@ -245,7 +260,11 @@ namespace BK7231Flasher
 				string text = capture.ToString();
 				foreach(SecbootProfile profile in profiles)
 				{
-					if(text.IndexOf(profile.Banner, StringComparison.Ordinal) >= 0)
+					string secondaryBanner = profile.Banner.Replace("(1MB)", "(2MB)");
+					bool secondaryBannerCatalogued = text.IndexOf(secondaryBanner, StringComparison.Ordinal) >= 0 &&
+						System.Text.Encoding.ASCII.GetString(profile.Image).IndexOf(secondaryBanner, StringComparison.Ordinal) >= 0;
+					if(text.IndexOf(profile.Banner, StringComparison.Ordinal) >= 0 ||
+						(secondaryBannerCatalogued && text.IndexOf(secondaryBanner, StringComparison.Ordinal) >= 0))
 					{
 						addLogLine();
 						return profile;
@@ -265,6 +284,14 @@ namespace BK7231Flasher
 							addErrorLine($"Unsupported W600 secboot: {banner}. No flash command was sent.");
 						return null;
 					}
+				}
+				if(romCharacters >= 4)
+				{
+					if(isCancelled || ReadFlashIdWithoutErase(false) == null)
+						return null;
+					romReady = true;
+					addLogLine("Mask ROM identified without an installed secboot banner.");
+					return null;
 				}
 				if(sw.ElapsedMilliseconds >= nextPrompt)
 				{
@@ -368,6 +395,11 @@ namespace BK7231Flasher
 		public override void doRead(int startSector = 0x000, int sectors = 10, bool fullRead = false)
 		{
 			ms = null;
+			modifiedAcquisition = false;
+			primaryOnlyAcquisition = false;
+			unverifiedSecbootAcquisition = false;
+			helperGeometry = null;
+			helperCleanupUnsafe = false;
 			secbootRecoveryRequired = false;
 			if(!TryCalculateHelperBaudRegister(baudrate, out uint helperBaudRegister))
 			{
@@ -386,9 +418,9 @@ namespace BK7231Flasher
 				addErrorLine("W600 read length is out of range.");
 				return;
 			}
-			if(offset < 0 || length <= 0 || offset > FlashSize - length)
+			if(offset < 0 || length <= 0 || offset > MaximumFlashSize - length)
 			{
-				addErrorLine("W600 read range must stay within the 1 MiB flash.");
+				addErrorLine("W600 read range must stay within the supported 2 MiB address space.");
 				return;
 			}
 			if(!doGenericSetup())
@@ -399,6 +431,8 @@ namespace BK7231Flasher
 			bool helperInstalled = false;
 			bool helperReady = false;
 			bool restorationCompleted = false;
+			bool romEntry = false;
+			bool recoveryGeometryConfirmed = false;
 			byte[] reconstructedFlash = null;
 			try
 			{
@@ -415,23 +449,43 @@ namespace BK7231Flasher
 				if(fls.Length != HelperSectorSize)
 					throw new InvalidDataException("The W600 helper FLS transfer must be exactly one 4 KiB XMODEM span.");
 
-				profile = WaitForSupportedSecboot(profiles, false, SecbootEntryTimeoutMs);
-				if(profile == null)
+				profile = WaitForSupportedSecboot(profiles, false, SecbootEntryTimeoutMs, out romEntry);
+				if(profile == null && !romEntry)
 					return;
 
-				secbootRecoveryRequired = true;
-				addLogLine("Requesting Mask ROM entry...");
-				ExecuteCommand(0x3F, null, 1, 0, isErrorExpected: true);
-				serial.BaudRate = 115200;
-				if(!WaitForRomAtCurrentBaud(RomEntryTimeoutMs, "after secboot 0x3F") || ReadFlashIdWithoutErase() == null)
-					throw new IOException("W600 did not enter Mask ROM after the secboot erase command.");
+				if(romEntry)
+				{
+					addWarningLine("ROM acquisition replaces flash 0x002000-0x002FFF with the temporary loader; the saved acquisition will retain those modified bytes.");
+					addLogLine("Waiting for download C bytes. If only P is shown, hold KEY, press and release RESET, then release KEY.");
+					if(!WaitForRomAtCurrentBaud(SecbootEntryTimeoutMs, "before ROM acquisition", true))
+						return;
+					if(isCancelled || ReadFlashIdWithoutErase(false) == null)
+						return;
+				}
+				else
+				{
+					secbootRecoveryRequired = true;
+					addLogLine("Requesting Mask ROM entry...");
+					ExecuteCommand(0x3F, null, 1, 0, isErrorExpected: true);
+					serial.BaudRate = 115200;
+					if(!WaitForRomAtCurrentBaud(RomEntryTimeoutMs, "after secboot 0x3F") || ReadFlashIdWithoutErase() == null)
+						throw new IOException("W600 did not enter Mask ROM after the secboot erase command.");
+				}
 				if(!SetBaud(baudrate))
 				{
 					logger.setState("Helper install failed", Color.Red);
 					addErrorLine($"Failed to establish the W600 ROM link at {baudrate} baud.");
 					return;
 				}
+				if(isCancelled)
+					return;
 				addLogLine("Staging loader...");
+				if(romEntry)
+				{
+					secbootRecoveryRequired = true;
+					modifiedAcquisition = true;
+					helperInstalled = true;
+				}
 				int helperSent = xm.Send(fls, (uint)HelperSectorOffset);
 				logger.setLogProgress("Writing loader" + Environment.NewLine, Color.Black);
 				if(helperSent != fls.Length)
@@ -442,25 +496,71 @@ namespace BK7231Flasher
 				serial.BaudRate = baudrate;
 				serial.DiscardInBuffer();
 				logger.setState("Reset W600 to start reader", Color.DarkOrange);
-				addLogLine("Temporary loader installed. Press and release RESET. Waiting for the reader...");
+				addLogLine(romEntry
+					? "Temporary loader installed. Release KEY, then press and release RESET. Waiting for the reader..."
+					: "Temporary loader installed. Press and release RESET. Waiting for the reader...");
 				if(!WaitForHelper(HelperEntryTimeoutMs, false, out int helperChunk))
 					throw new IOException("Timed out waiting for the temporary W600 secboot reader.");
 				helperReady = true;
-				LogHelperFlashInfo();
+				int detectedCapacity = LogHelperFlashInfo(false);
+				helperCleanupUnsafe |= ReadUInt32(helperGeometry, 32) == 6u;
+				if(helperCleanupUnsafe)
+					throw new IOException("Secondary SPI did not become idle after cleanup; acquisition and automatic flash programming are blocked.");
+				if(detectedCapacity != FlashSize || ReadUInt32(helperGeometry, 16) != lastHelperJedecId)
+					throw new InvalidDataException("Primary JEDEC identity/capacity did not match the loader geometry; acquisition is blocked.");
+				recoveryGeometryConfirmed = true;
+				uint secondaryId = ReadUInt32(helperGeometry, 20);
+				uint secondarySize = ReadUInt32(helperGeometry, 28);
+				uint secondaryState = ReadUInt32(helperGeometry, 32);
+				int totalCapacity = (int)ReadUInt32(helperGeometry, 4);
+				primaryOnlyAcquisition = secondaryState != 1u;
+				if(secondaryState == 1u)
+				{
+					addSuccess($"Detected flash: primary {FormatHelperFlashBank(lastHelperJedecId, (uint)detectedCapacity)}; " +
+						$"secondary {FormatHelperFlashBank(secondaryId, secondarySize)}; " +
+						$"total {totalCapacity / FlashSize} MiB ({totalCapacity} bytes)." + Environment.NewLine);
+				}
+				else
+				{
+					addSuccess($"Detected flash: primary {FormatHelperFlashBank(lastHelperJedecId, (uint)detectedCapacity)}." + Environment.NewLine);
+					string[] probeStates = {
+						"no response; physical presence remains unconfirmed", "supported",
+						"unsupported JEDEC/density", "SPI timeout or transfer fault", "inconsistent JEDEC responses",
+						"pre-existing SPI busy/FIFO/fault/done state or reset disabled", "SPI cleanup failed"
+					};
+					addWarningLine($"Secondary flash: {probeStates[secondaryState]}; JEDEC 0x{secondaryId:X6}. Acquisition is limited to the 1 MiB primary flash; total installed capacity is unconfirmed.");
+				}
+				if(fullRead)
+					length = totalCapacity;
+				if(offset > totalCapacity - length)
+					throw new InvalidDataException("Requested range exceeds the detected readable flash regions.");
 
 				logger.setState("Reading W600 flash", Color.Green);
 				int chunkSize = Math.Min(helperChunk, HelperMaxReadLength);
-				addLogLine($"Reading W600 flash: {FlashSize} bytes at {baudrate} baud...");
-				byte[] result = ReadHelperRange(FlashBase, FlashSize, chunkSize);
+				addLogLine($"Reading W600 flash: {totalCapacity} bytes at {baudrate} baud...");
+				byte[] result = ReadHelperRange(FlashBase, totalCapacity, chunkSize);
 				if(result == null)
 					throw new IOException(isCancelled ? "W600 flash read was cancelled." : "W600 flash read failed.");
-
-				addLogLine("Verification: secboot remainder before backup reconstruction.");
-				if(!SecbootRemainderMatches(result, profile.Image))
-					throw new InvalidDataException($"The untouched secboot remainder does not match catalogued {profile.Version}; the dump cannot be reconstructed exactly.");
-
 				reconstructedFlash = result;
-				Array.Copy(profile.Image, 0, reconstructedFlash, SecbootOffset, HelperSectorSize);
+
+				if(!romEntry)
+				{
+					addLogLine("Verification: secboot remainder before backup reconstruction.");
+					if(!SecbootRemainderMatches(result, profile.Image))
+					{
+						unverifiedSecbootAcquisition = true;
+						modifiedAcquisition = true;
+						LogSecbootMismatch(result, profile);
+						throw new InvalidDataException($"The untouched secboot remainder does not match catalogued {profile.Version}; raw acquired bytes are retained without reconstruction.");
+					}
+					addLogLine($"Verified secboot 0x{SecbootOffset + HelperSectorSize:X6}-0x{SecbootOffset + SecbootProgrammedSize - 1:X6}; " +
+						$"preserved {FlsHeaderSize} acquired tail bytes at 0x{SecbootOffset + SecbootProgrammedSize:X6}-0x{SecbootOffset + SecbootSize - 1:X6}.");
+				}
+
+				if(!romEntry)
+					Array.Copy(profile.Image, 0, reconstructedFlash, SecbootOffset, HelperSectorSize);
+				else
+					addWarningLine("Acquired bytes are preserved without secboot reconstruction. The temporary loader remains in the saved flash range 0x002000-0x002FFF; this is not an original full-chip backup. The device will receive V3.13 secboot.");
 
 				if(!RestoreSecboot(updateProfile, helperInstalled, helperReady, true))
 					throw new IOException($"The flash was read, but the automatic {updateProfile.Version} secboot update failed.");
@@ -469,7 +569,8 @@ namespace BK7231Flasher
 				byte[] requested = new byte[length];
 				Array.Copy(reconstructedFlash, offset, requested, 0, length);
 				ms = new MemoryStream(requested);
-				logger.setState("Read complete", Color.DarkGreen);
+				logger.setState(primaryOnlyAcquisition ? "Primary-only acquisition complete" : romEntry ? "Modified acquisition complete" : "Read complete",
+					romEntry || primaryOnlyAcquisition ? Color.DarkOrange : Color.DarkGreen);
 			}
 			catch(Exception ex)
 			{
@@ -478,14 +579,33 @@ namespace BK7231Flasher
 					byte[] requested = new byte[length];
 					Array.Copy(reconstructedFlash, offset, requested, 0, length);
 					ms = new MemoryStream(requested);
-					addLogLine("The reconstructed read result is retained even though device recovery did not complete.");
+					addLogLine(unverifiedSecbootAcquisition
+						? "The unverified raw acquisition is retained; recovery status is reported separately."
+						: romEntry
+						? "The modified acquisition is retained even though device recovery did not complete."
+						: "The reconstructed read result is retained even though device recovery did not complete.");
 				}
 				logger.setState("Read error", Color.Red);
 				addErrorLine("W600 read failed: " + ex.Message);
 			}
 			finally
 			{
-				if(secbootRecoveryRequired && profile != null && !restorationCompleted)
+				if(secbootRecoveryRequired && helperCleanupUnsafe)
+				{
+					addErrorLine("Secondary SPI cleanup failed. Automatic recovery is blocked; keep the device powered and use manual Mask ROM recovery.");
+				}
+				else if(secbootRecoveryRequired && (romEntry || helperReady) && !recoveryGeometryConfirmed)
+				{
+					addErrorLine("Temporary loader installation was attempted, but 1 MiB flash geometry was not confirmed. Automatic V3.13 programming is blocked; the device may remain in the temporary loader or Mask ROM and requires manual recovery after its flash is identified.");
+				}
+				else if(secbootRecoveryRequired && romEntry && !restorationCompleted)
+				{
+					if(RestoreSecboot(updateProfile, helperInstalled, helperReady, true))
+						secbootRecoveryRequired = false;
+					else
+						addErrorLine("Automatic V3.13 recovery failed. Keep the device powered; Mask ROM recovery is required.");
+				}
+				if(secbootRecoveryRequired && profile != null && !restorationCompleted && !helperCleanupUnsafe && (!helperReady || recoveryGeometryConfirmed))
 				{
 					logger.setState("Restoring W600 secboot", Color.DarkOrange);
 					addLogLine("Backup did not complete; attempting mandatory secboot recovery before closing COM.");
@@ -512,14 +632,25 @@ namespace BK7231Flasher
 		{
 			if(ms == null)
 				return false;
-			string fileName = MiscUtils.formatDateNowFileName("readResult_" + chipType, backupName, "bin");
+			string fileName = MiscUtils.formatDateNowFileName("readResult_" + chipType +
+				(modifiedAcquisition ? "_modified_acquisition" : "") +
+				(unverifiedSecbootAcquisition ? "_unverified_secboot" : "") +
+				(primaryOnlyAcquisition ? "_primary_only" : ""), backupName, "bin");
 			string fullPath = "backups/" + fileName;
 			byte[] data = ms.ToArray();
 			File.WriteAllBytes(fullPath, data);
 			addLogLine("Saved: " + data.Length + " bytes to " + fullPath + ".");
 			logger.onReadResultQIOSaved(data, "", fullPath);
-			if (secbootRecoveryRequired)
+			if(primaryOnlyAcquisition)
+				addWarningLine("Primary-only acquisition saved. Secondary flash presence/geometry was not established; this is not a verified backup of all installed flash.");
+			if(unverifiedSecbootAcquisition)
+				addWarningLine("Unverified secboot acquisition saved as raw acquired bytes, including the temporary loader sector. No catalog reconstruction was applied; recovery status is reported in the log.");
+			else if (secbootRecoveryRequired)
 				addWarningLine("Backup saved, but secboot recovery is incomplete.");
+			else if(modifiedAcquisition)
+				addWarningLine("Modified acquisition saved; flash 0x002000-0x002FFF was replaced before acquisition. Installed V3.13 secboot differs from the saved acquisition.");
+			else if(primaryOnlyAcquisition)
+				addWarningLine("Primary-only acquisition complete; total installed flash capacity remains unconfirmed.");
 			else
 				addSuccess("Read complete." + Environment.NewLine);
 			return true;
@@ -689,12 +820,32 @@ namespace BK7231Flasher
 				secboot == null || secboot.Length != SecbootSize)
 				return false;
 			for(int flashOffset = SecbootOffset + HelperSectorSize;
-				flashOffset < SecbootOffset + SecbootSize; flashOffset++)
+				flashOffset < SecbootOffset + SecbootProgrammedSize; flashOffset++)
 			{
 				if(flash[flashOffset] != secboot[flashOffset - SecbootOffset])
 					return false;
 			}
 			return true;
+		}
+
+		private void LogSecbootMismatch(byte[] flash, SecbootProfile profile)
+		{
+			int remainderLength = SecbootProgrammedSize - HelperSectorSize;
+			byte[] actual = new byte[remainderLength];
+			byte[] expected = new byte[remainderLength];
+			Array.Copy(flash, SecbootOffset + HelperSectorSize, actual, 0, remainderLength);
+			Array.Copy(profile.Image, HelperSectorSize, expected, 0, remainderLength);
+			for(int i = 0; i < remainderLength; i++)
+			{
+				if(actual[i] != expected[i])
+				{
+					addErrorLine($"Secboot first mismatch at flash 0x{SecbootOffset + HelperSectorSize + i:X6}: " +
+						$"expected 0x{expected[i]:X2}, acquired 0x{actual[i]:X2}.");
+					break;
+				}
+			}
+			addLogLine($"Untouched secboot 0x{SecbootOffset + HelperSectorSize:X6}-0x{SecbootOffset + SecbootProgrammedSize - 1:X6} SHA-256: acquired {GetSha256(actual)}, " +
+				$"catalogued {profile.Version} {GetSha256(expected)}.");
 		}
 
 		private void ResetXmodemForRecovery()
@@ -709,7 +860,7 @@ namespace BK7231Flasher
 			xm.PacketSent += Xm_PacketSent;
 		}
 
-		private bool WaitForRomAtCurrentBaud(int timeoutMs, string phase)
+		private bool WaitForRomAtCurrentBaud(int timeoutMs, string phase, bool stopOnCancellation = false)
 		{
 			Stopwatch sw = Stopwatch.StartNew();
 			int consecutiveC = 0;
@@ -717,7 +868,7 @@ namespace BK7231Flasher
 			int totalP = 0;
 			int totalOther = 0;
 			addLogLine("Waiting for Mask ROM...");
-			while(sw.ElapsedMilliseconds < timeoutMs)
+			while(sw.ElapsedMilliseconds < timeoutMs && (!stopOnCancellation || !isCancelled))
 			{
 				if(serial.BytesToRead > 0)
 				{
@@ -915,11 +1066,11 @@ namespace BK7231Flasher
 			if(ramLoader == null || ramLoader.Length == 0 || HelperPayloadOffset + ramLoader.Length > HelperTransferPayloadSize)
 				throw new InvalidDataException("The embedded W600 UART reader has an unexpected size.");
 			if(ramLoader.Length < ReaderProtocolMarker.Length)
-				throw new InvalidDataException("The embedded W600 UART reader has no W600RD30 build marker. Build and install the reader before building OpenIOTflasher.");
+				throw new InvalidDataException("The embedded W600 UART reader has no W600RD32 build marker. Build and install the reader before building OpenIOTflasher.");
 			for(int i = 0; i < ReaderProtocolMarker.Length; i++)
 			{
 				if(ramLoader[ramLoader.Length - ReaderProtocolMarker.Length + i] != ReaderProtocolMarker[i])
-					throw new InvalidDataException("The embedded W600 UART reader is not W600RD30. Build and install the reader before building OpenIOTflasher.");
+					throw new InvalidDataException("The embedded W600 UART reader is not W600RD32. Build and install the reader before building OpenIOTflasher.");
 			}
 
 			byte[] sector = new byte[HelperTransferPayloadSize];
@@ -1004,11 +1155,11 @@ namespace BK7231Flasher
 					lastFailedSequence = requestSequence;
 					lastFailure = error;
 				}
-				else if(payload.Length != 16)
+				else if(payload.Length != 52)
 				{
 					failedAttempts++;
 					lastFailedSequence = requestSequence;
-					lastFailure = $"unexpected INFO payload length {payload.Length}/16 bytes";
+					lastFailure = $"unexpected INFO payload length {payload.Length}/52 bytes";
 				}
 				else
 				{
@@ -1016,11 +1167,28 @@ namespace BK7231Flasher
 					uint reportedSize = ReadUInt32(payload, 4);
 					int reportedChunkSize = ReadUInt16(payload, 8);
 					uint reportedSectorSize = ReadUInt32(payload, 12);
-					if(reportedBase == FlashBase && reportedSize == (uint)FlashSize &&
+					uint primaryId = ReadUInt32(payload, 16);
+					uint secondaryId = ReadUInt32(payload, 20);
+					uint primarySize = ReadUInt32(payload, 24);
+					uint secondarySize = ReadUInt32(payload, 28);
+					uint secondaryState = ReadUInt32(payload, 32);
+					bool secondaryValid = secondaryState == 1u
+						? secondarySize == FlashSize && (secondaryId & 0xffu) != 0u &&
+							(secondaryId & 0xffu) != 0xffu && (secondaryId >> 16) == 0x14u
+						: secondarySize == 0u;
+					if(reportedBase == FlashBase && primarySize == FlashSize &&
+						(primaryId & 0xff000000u) == 0u && (secondaryId & 0xff000000u) == 0u &&
+						(primaryId & 0xffu) != 0u && (primaryId & 0xffu) != 0xffu &&
+						(primaryId >> 16) == 0x14u &&
+						secondaryState <= 6u && secondaryValid &&
+						reportedSize == primarySize + secondarySize && reportedSize <= MaximumFlashSize &&
+						ReadUInt16(payload, 10) == 2u &&
 						reportedSectorSize == 0x00020000u && reportedChunkSize > 0 &&
 						reportedChunkSize <= HelperMaxReadLength)
 					{
 						chunkSize = reportedChunkSize;
+						helperGeometry = payload;
+						helperCleanupUnsafe |= secondaryState == 6u;
 						logger.setLogProgress("W600 UART loader ready." + Environment.NewLine, Color.Green);
 						return true;
 					}
@@ -1050,7 +1218,7 @@ namespace BK7231Flasher
 			string readProgressText = null;
 			addLogLine($"Read range: 0x{address - FlashBase:X6}-0x{address - FlashBase + length - 1:X6} ({length} bytes), at {serial.BaudRate} baud.");
 			ushort sequence = 0x100;
-			while(completed < length && !isCancelled)
+			while(completed < length && !isCancelled && !helperCleanupUnsafe)
 			{
 				int requestLength = Math.Min(chunkSize, length - completed);
 				uint rangeStart = address + (uint)completed;
@@ -1058,7 +1226,7 @@ namespace BK7231Flasher
 				byte[] payload = null;
 				string lastError = "no response";
 				bool ok = false;
-				for(int attempt = 1; attempt <= 3 && !isCancelled; attempt++)
+				for(int attempt = 1; attempt <= 3 && !isCancelled && !helperCleanupUnsafe; attempt++)
 				{
 					ok = TryHelperCommand(ProtocolRead, sequence, address + (uint)completed,
 						(ushort)requestLength, CalculateReadResponseTimeoutMs(requestLength), false,
@@ -1067,7 +1235,7 @@ namespace BK7231Flasher
 						break;
 					addLogLine($"W600 UART read attempt {attempt}/3 failed at " +
 						$"0x{address + (uint)completed:X8}: {lastError}");
-					if(attempt < 3)
+					if(attempt < 3 && !helperCleanupUnsafe)
 						DrainHelperResponseTail(CalculateReadResponseTimeoutMs(requestLength));
 				}
 				if(!ok)
@@ -1098,24 +1266,36 @@ namespace BK7231Flasher
 			return result;
 		}
 
-		private void LogHelperFlashInfo()
+		private static string FormatHelperFlashBank(uint jedecId, uint size)
 		{
+			SPIFlashInfo flashInfo = SPIFlashInfoList.Singleton.findFlashForMID((int)jedecId);
+			string identity = flashInfo == null ? "unknown" : flashInfo.manufacturer;
+			if(flashInfo != null && !string.IsNullOrEmpty(flashInfo.icName))
+				identity += " " + flashInfo.icName;
+			return $"{identity}, JEDEC ID {jedecId & 0xff:X2} {(jedecId >> 8) & 0xff:X2} {(jedecId >> 16) & 0xff:X2}, " +
+				$"{size / FlashSize} MiB ({size} bytes)";
+		}
+
+		private int LogHelperFlashInfo(bool logDetectedFlash = true)
+		{
+			lastHelperJedecId = 0u;
 			if(!TryHelperCommand(ProtocolFlashId, 0xFFE0, 0, 0, 750, false,
 				out byte[] payload, out string error))
 			{
 				addWarningLine("W600 flash JEDEC ID unavailable: " + error + ".");
-				return;
+				return 0;
 			}
 			if(payload.Length != 4)
 			{
 				addWarningLine($"W600 flash JEDEC ID returned {payload.Length}/4 bytes.");
-				return;
+				return 0;
 			}
 			int jedecId = (int)(ReadUInt32(payload, 0) & 0x00FFFFFFu);
+			lastHelperJedecId = (uint)jedecId;
 			if(jedecId == 0 || jedecId == 0x00FFFFFF)
 			{
 				addWarningLine($"W600 flash returned invalid JEDEC ID 0x{jedecId:X6}.");
-				return;
+				return 0;
 			}
 
 			int capacityExponent = (jedecId >> 16) & 0xff;
@@ -1126,7 +1306,8 @@ namespace BK7231Flasher
 			if(flashInfo != null)
 			{
 				int reportedSize = capacity != 0 ? capacity : flashInfo.szMem;
-				addSuccess(FormatFlashInfo(jedecId, flashInfo.manufacturer, reportedSize, flashInfo.icName) + Environment.NewLine);
+				if(logDetectedFlash)
+					addSuccess(FormatFlashInfo(jedecId, flashInfo.manufacturer, reportedSize, flashInfo.icName) + Environment.NewLine);
 				if(capacity != 0 && flashInfo.szMem != capacity)
 				{
 					addWarningLine("JEDEC flash size differs from flash list size: JEDEC=" +
@@ -1148,6 +1329,7 @@ namespace BK7231Flasher
 			{
 				addWarningLine($"W600 backup remains limited to 1 MiB; JEDEC reports 0x{capacity:X} bytes.");
 			}
+			return capacity;
 		}
 
 		private int CalculateReadResponseTimeoutMs(int payloadLength)
@@ -1243,6 +1425,10 @@ namespace BK7231Flasher
 			}
 			if(header[5] != 0)
 			{
+				if(header[5] == 6 && opcode == ProtocolRead &&
+					ReadUInt32(header, 8) == address && ReadUInt16(header, 12) == 0 &&
+					ReadUInt32(header, 14) == 0u)
+					helperCleanupUnsafe = true;
 				error = "reader status " + header[5];
 				return false;
 			}
@@ -1253,11 +1439,23 @@ namespace BK7231Flasher
 				error = "response range mismatch";
 				return false;
 			}
+			long headerElapsedMs = sw.ElapsedMilliseconds;
+			int payloadTimeoutMs = timeoutMs;
+			if(opcode == ProtocolRead)
+			{
+				long payloadWireMilliseconds = (responseLength * 10L * 1000L + baudrate - 1L) / baudrate;
+				payloadTimeoutMs = (int)Math.Max(MinimumReadResponseTimeoutMs,
+					payloadWireMilliseconds + ReadResponseTimeoutMarginMs);
+				sw.Restart();
+			}
 			byte[] receivedPayload = new byte[responseLength];
-			if(!ReadSerialExact(receivedPayload, 0, receivedPayload.Length, sw, timeoutMs,
+			if(!ReadSerialExact(receivedPayload, 0, receivedPayload.Length, sw, payloadTimeoutMs,
 				ignoreCancellation, out int payloadBytesRead))
 			{
 				error = $"response payload timeout after {payloadBytesRead}/{receivedPayload.Length} bytes";
+				if(opcode == ProtocolRead)
+					error += $" (header/setup {headerElapsedMs} ms of {timeoutMs} ms; " +
+						$"payload {sw.ElapsedMilliseconds} ms of {payloadTimeoutMs} ms)";
 				return false;
 			}
 			uint expectedPayloadCrc = ReadUInt32(header, 14);
