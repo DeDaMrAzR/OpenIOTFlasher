@@ -11,6 +11,8 @@
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
+	<AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+	<GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
     <TargetFrameworkProfile />
     <LangVersion>8.0</LangVersion>
   </PropertyGroup>
@@ -279,10 +281,23 @@
 			Text="SV6x66 unified loaders are missing. Build and review bkflasher_stub's bank-aware-carriers target, then import its bankA/SV6X66_BankA_Carrier.bin and bankB/SV6X66_BankB_Carrier.bin as Floaders/SV6x66_AppBankA_Carrier.bin and Floaders/SV6x66_AppBankB_Carrier.bin. Use the reviewed unified pair; do not substitute restore-only or legacy carriers." />
 	</Target>
   <Target Name="BeforeBuild">
+	<PropertyGroup>
+		<FlasherFileVersion>1.0.0.0</FlasherFileVersion>
+		<FlasherFileVersion Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(FLASHERVERSION)', '^\d+$'))">1.0.$(FLASHERVERSION).0</FlasherFileVersion>
+		<FlasherFileVersion Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(FLASHERVERSION)', '^\d+\.\d+\.\d+$'))">$(FLASHERVERSION).0</FlasherFileVersion>
+		<FlasherInformationalVersion>local build</FlasherInformationalVersion>
+		<FlasherInformationalVersion Condition="'$(FLASHERVERSION)' != ''">build $(FLASHERVERSION)</FlasherInformationalVersion>
+	</PropertyGroup>
     <ItemGroup>
       <AssemblyAttributes Include="BK7231Flasher.BuildVersion">
         <_Parameter1>$(FLASHERVERSION)</_Parameter1>
       </AssemblyAttributes>
+		<AssemblyAttributes Include="System.Reflection.AssemblyFileVersionAttribute">
+			<_Parameter1>$(FlasherFileVersion)</_Parameter1>
+		</AssemblyAttributes>
+		<AssemblyAttributes Include="System.Reflection.AssemblyInformationalVersionAttribute">
+			<_Parameter1>$(FlasherInformationalVersion)</_Parameter1>
+		</AssemblyAttributes>
     </ItemGroup>
     <WriteCodeFragment AssemblyAttributes="@(AssemblyAttributes)" Language="C#" OutputFile="$(IntermediateOutputPath)BuildVersion.cs">
       <Output TaskParameter="OutputFile" ItemName="Compile" />
