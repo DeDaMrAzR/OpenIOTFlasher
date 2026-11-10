@@ -50,7 +50,7 @@ R cmp / W cmp - Read/write compression via custom flasher stub; ➖ means not ap
 ² OBK config location is not defined for this platform<br>
 ³ Always writes from `0x0`<br>
 ⁴ Custom reads work, but custom writes still follow the image/partition flow instead of arbitrary raw offsets.<br>
-⁵ W600 support is validated on 1 MiB devices. 2 MiB devices have not been tested.<br>
+⁵ W600 reads support 1 MiB primary flash and a positively identified 1 MiB secondary bank (2 MiB total). If secondary geometry cannot be confirmed, acquisitions are marked primary-only.<br>
 ⁶ OBK config reads work, but standalone OBK config writes are not implemented.<br>
 ⁷ RF partition restore and relocation are not defined for this platform.<br>
 ⁸ SV6x66 supports backup and complete 2 MiB backup restoration through recognized stock and CKW04 OpenBeken factory profiles, plus installation of validated dual-bank OpenBeken application bundles. Loader staging replaces inactive Bank A or B; the normalized backup cannot preserve that bank's previous contents. Full restore writes the saved boot selector last. Interrupted full restoration requires SPI recovery.<br>
