@@ -73,9 +73,9 @@ namespace BK7231Flasher
 		{
 			bool outputRedirected = Console.IsOutputRedirected;
 			bool errorRedirected = Console.IsErrorRedirected;
-			if (!outputRedirected && !errorRedirected)
+			if (Environment.OSVersion.Platform == PlatformID.Win32NT && !outputRedirected && !errorRedirected)
 			{
-				// Direct interactive launch: attach to the caller's console or allocate one.
+				// Direct interactive Windows launch: attach to the caller's console or allocate one.
 				if (!AttachConsole(ATTACH_PARENT_PROCESS))
 					AllocConsole();
 				Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
