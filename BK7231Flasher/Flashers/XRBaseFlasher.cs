@@ -31,6 +31,41 @@ namespace BK7231Flasher
 		protected int          flashSizeBytes = 2 * 0x100000;
 		protected byte         bromVersion    = 0x00;
 
+		StreamWriter xrDiagnosticLog;
+		bool xrDiagnosticCapture;
+		int xrDiagnosticRxSamples;
+
+		void StartXrDiagnostics()
+		{
+			if (chipType != BKType.XR809 || xrDiagnosticLog != null) return;
+			try
+			{
+				var version = (BuildVersion)Attribute.GetCustomAttribute(typeof(XRBaseFlasher).Assembly, typeof(BuildVersion));
+				if (version?.Value != "1.0.159") return;
+				string directory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+				Directory.CreateDirectory(directory);
+				string path = Path.Combine(directory, "xr809_" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffZ") + "_" + Guid.NewGuid().ToString("N") + ".log");
+				xrDiagnosticLog = new StreamWriter(path, false, Encoding.UTF8) { AutoFlush = true };
+				addLogLine("Local XR809 debug log: " + path);
+				LogXrDiagnostic("BuildVersion=" + version.Value + "; port=" + serialName + "; requested transfer=" + baudrate);
+			}
+			catch (Exception ex)
+			{
+				addWarningLine("Local XR809 debug log unavailable: " + ex.Message);
+			}
+		}
+
+		void LogXrDiagnostic(string message)
+		{
+			try { xrDiagnosticLog?.WriteLine(DateTime.UtcNow.ToString("O") + " " + message); }
+			catch (Exception ex)
+			{
+				try { xrDiagnosticLog?.Dispose(); } catch { }
+				xrDiagnosticLog = null;
+				try { addWarningLine("Local XR809 debug logging stopped: " + ex.Message); } catch { }
+			}
+		}
+
 		protected struct BROMResponse
 		{
 			public byte   Flags;
@@ -209,6 +244,7 @@ namespace BK7231Flasher
 
 		protected bool DoGenericSetup()
 		{
+			StartXrDiagnostics();
 			addLogLine($"Connecting: {serialName}, {chipType}, requested transfer {baudrate} baud.");
 			try
 			{
@@ -218,11 +254,13 @@ namespace BK7231Flasher
 				serial.ReadBufferSize  = 1024 * 1024;
 				serial.WriteBufferSize = 1024 * 1024;
 				serial.Open();
+				LogXrDiagnostic($"Port open: actual={serial.BaudRate}, data={serial.DataBits}, parity={serial.Parity}, stop={serial.StopBits}, handshake={serial.Handshake}, DTR={serial.DtrEnable}, RTS={serial.RtsEnable}; no automatic reset/boot strap control.");
 				serial.DiscardInBuffer();
 				serial.DiscardOutBuffer();
 			}
 			catch (Exception ex)
 			{
+				LogXrDiagnostic("Port setup exception: " + ex);
 				addErrorLine("Port setup failed: " + ex.Message);
 				return false;
 			}
@@ -231,6 +269,7 @@ namespace BK7231Flasher
 
 		public override void closePort()
 		{
+			LogXrDiagnostic("Closing transport; cancelled=" + isCancelled);
 			if (serial != null && serial.IsOpen && serial.BaudRate != XR_ROM_BAUD)
 			{
 				try
@@ -246,7 +285,12 @@ namespace BK7231Flasher
 				{
 				}
 			}
-			base.closePort();
+			try { base.closePort(); }
+			finally
+			{
+				try { xrDiagnosticLog?.Dispose(); } catch { }
+				xrDiagnosticLog = null;
+			}
 		}
 
 		protected void DrainInput(int quietMs = 150, int hardLimitMs = 750)
@@ -259,7 +303,9 @@ namespace BK7231Flasher
 				if (waiting > 0)
 				{
 					var buf = new byte[waiting];
-					serial.Read(buf, 0, buf.Length);
+					int received = serial.Read(buf, 0, buf.Length);
+					if (xrDiagnosticLog != null && xrDiagnosticCapture && xrDiagnosticRxSamples++ < 4)
+						LogXrDiagnostic($"Discarded RX sample (max4 per sync/upgrade): {received} bytes; first32={BitConverter.ToString(buf, 0, Math.Min(received, 32))}");
 					quiet.Restart();
 					continue;
 				}
@@ -314,6 +360,8 @@ namespace BK7231Flasher
 
 			try
 			{
+				xrDiagnosticCapture = xrDiagnosticLog != null;
+				xrDiagnosticRxSamples = 0;
 				if (serial.BaudRate != XR_ROM_BAUD)
 				{
 					serial.BaudRate = XR_ROM_BAUD;
@@ -328,46 +376,62 @@ namespace BK7231Flasher
 				serial.Write(cmd, 0, cmd.Length);
 				serial.Write(new byte[] { 0x0A, 0x00 }, 0, 2);
 				serial.BaseStream.Flush();
+				LogXrDiagnostic("Software entry TX at " + serial.BaudRate + ": 0A 75 70 67 72 61 64 65 0A 00; firmware console support required.");
 				Thread.Sleep(XR_UPGRADE_SETTLE_MS);
 
 				DrainInput(quietMs: 40, hardLimitMs: 200);
 			}
 			catch (Exception ex)
 			{
+				LogXrDiagnostic("Software entry exception: " + ex);
 				addLogLine("Upgrade pre-sync command did not complete: " + ex.Message);
 			}
+			finally { xrDiagnosticCapture = false; }
 		}
 
 		protected bool Sync()
 		{
-			for (int attempt = 1; attempt <= XR_SYNC_RETRY_COUNT; attempt++)
+			xrDiagnosticCapture = xrDiagnosticLog != null;
+			xrDiagnosticRxSamples = 0;
+			try
 			{
-				if (isCancelled) return false;
-				DrainInput();
-				serial.Write(new byte[] { 0x55 }, 0, 1);
-				serial.BaseStream.Flush();
-
-				var reply = new byte[2];
-				int got   = 0;
-				var sw    = Stopwatch.StartNew();
-				while (sw.ElapsedMilliseconds < 1500 && got < 2 && !isCancelled)
+				for (int attempt = 1; attempt <= XR_SYNC_RETRY_COUNT; attempt++)
 				{
-					try { got += serial.Read(reply, got, 2 - got); }
-					catch (TimeoutException) { }
-				}
-
-				if (got == 2 && reply[0] == 'O' && reply[1] == 'K')
-				{
-					if (attempt > 1)
-						addLogLine($"Sync OK (attempt {attempt})");
-					else
-						addLogLine("Sync OK");
+					if (isCancelled) return false;
 					DrainInput();
-					return true;
+					serial.Write(new byte[] { 0x55 }, 0, 1);
+					serial.BaseStream.Flush();
+
+					var reply = new byte[2];
+					int got   = 0;
+					var sw    = Stopwatch.StartNew();
+					int timeouts = 0;
+					while (sw.ElapsedMilliseconds < 1500 && got < 2 && !isCancelled)
+					{
+						try { got += serial.Read(reply, got, 2 - got); }
+						catch (TimeoutException) { timeouts++; }
+					}
+					LogXrDiagnostic($"Sync {attempt}/{XR_SYNC_RETRY_COUNT}: baud={serial.BaudRate}; TX=55; RX={BitConverter.ToString(reply, 0, got)}; received={got}/2; elapsed={sw.ElapsedMilliseconds}ms; read timeouts={timeouts}; cancelled={isCancelled}");
+
+					if (got == 2 && reply[0] == 'O' && reply[1] == 'K')
+					{
+						if (attempt > 1)
+							addLogLine($"Sync OK (attempt {attempt})");
+						else
+							addLogLine("Sync OK");
+						DrainInput();
+						return true;
+					}
 				}
+				addErrorLine($"Sync failed after {XR_SYNC_RETRY_COUNT} attempts.");
+				return false;
 			}
-			addErrorLine($"Sync failed after {XR_SYNC_RETRY_COUNT} attempts.");
-			return false;
+			catch (Exception ex)
+			{
+				LogXrDiagnostic("Sync exception: " + ex);
+				throw;
+			}
+			finally { xrDiagnosticCapture = false; }
 		}
 
 		protected BROMResponse ReadBromResponse(int headerTimeoutMs, int payloadTimeoutMs)
@@ -811,6 +875,22 @@ namespace BK7231Flasher
 		{
 			try
 			{
+				byte[] fileData = null;
+				if (rwMode == WriteMode.OnlyWrite || rwMode == WriteMode.ReadAndWrite)
+				{
+					if (string.IsNullOrWhiteSpace(sourceFileName) || !File.Exists(sourceFileName))
+					{
+						addErrorLine($"Source file not found: {sourceFileName}");
+						return;
+					}
+					addLogLine($"Loading: {sourceFileName}");
+					fileData = File.ReadAllBytes(sourceFileName);
+					if (fileData.Length == 0)
+					{
+						addErrorLine("Source firmware file is empty.");
+						return;
+					}
+				}
 				if (!DoGenericSetup())               return;
 				if (!EnsureConnectedAndIdentified()) return;
 
@@ -829,14 +909,6 @@ namespace BK7231Flasher
 
 				if (rwMode == WriteMode.OnlyWrite || rwMode == WriteMode.ReadAndWrite)
 				{
-					if (string.IsNullOrEmpty(sourceFileName) || !File.Exists(sourceFileName))
-					{
-						addErrorLine($"Source file not found: {sourceFileName}");
-						return;
-					}
-
-					addLogLine($"Loading: {sourceFileName}");
-					byte[] fileData           = File.ReadAllBytes(sourceFileName);
 					bool customRawWrite       = IsCustomRawWriteRequest(startSector, sectors, rwMode);
 					int requestedWriteAddress = PublicSectorIndexToByteAddress(startSector);
 					int writeAddress          = requestedWriteAddress;
