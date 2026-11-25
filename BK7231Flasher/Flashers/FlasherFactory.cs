@@ -58,6 +58,8 @@ namespace BK7231Flasher
 					return new OPLFlasher(cancellationToken);
 				case BKType.SV6X66:
 					return new SV6x66Flasher(cancellationToken);
+				case BKType.MT7687:
+					return new MT7687Flasher(cancellationToken);
 				default:
 					return new BK7231Flasher(cancellationToken);
 			}

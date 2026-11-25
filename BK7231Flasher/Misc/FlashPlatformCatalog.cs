@@ -36,6 +36,7 @@ namespace BK7231Flasher
 			{ BKType.GenericSPI, "Generic SPI CH341" },
 			{ BKType.LN882H,     "LN882H" },
 			{ BKType.LN8825,     "LN8825" },
+			{ BKType.MT7687,     "MT7687/MT7697" },
 			{ BKType.RDA5981,    "RDA5981" },
 			{ BKType.OPL1000A2,  "OPL1000A2" },
 			{ BKType.RTL8710B,   "RTL8710B (AmebaZ)" },

@@ -83,6 +83,9 @@ namespace BK7231Flasher
 				case BKType.BK7239N:
 					sectors = 1;
 					return 0x3C8000;
+				case BKType.MT7687:
+					sectors = 0x8000 / BK7231Flasher.SECTOR_SIZE;
+					return 0x60000;
 				default:
 					sectors = 0;
 					return 0;
