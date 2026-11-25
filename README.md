@@ -7,7 +7,12 @@ OpenIOTFlasher is a simple Windows application that allows you to back up and fl
 
 This project is maintained as [OpenIOTFlasher](https://github.com/DeDaMrAzR/OpenIOTFlasher), a fork of the original [BK7231 GUI Flash Tool](https://github.com/openshwprojects/BK7231GUIFlashTool) and all credits belongs to the owner of that repo!!!
 
+Thanks also to [NonPIayerCharacter](https://github.com/NonPIayerCharacter) for MT7687/MT7697 support and [divadiow](https://github.com/divadiow) for the Linux CLI fix and the SM2135 current-value correction ported from [upstream PR #179](https://github.com/openshwprojects/BK7231GUIFlashTool/pull/179).
+
+Download the latest `OpenIOTFlasher-v<version>.zip` from [Releases](https://github.com/DeDaMrAzR/OpenIOTFlasher/releases/latest). Extract the complete archive and keep `OpenIOTFlasher.exe`, its `.exe.config` file and the supplied DLLs together. The Windows application requires .NET Framework 4.8.
+
 Supported GUI-selectable chip/platform modes:
+
 - Beken UART:
   - BK7231M
   - BK7231N (T2, T34, BL2028N)
@@ -39,6 +44,10 @@ Supported GUI-selectable chip/platform modes:
 - Lightning Semi:
   - LN882H
   - LN8825
+- MediaTek:
+  - MT7687/MT7697
+- Opulinks:
+  - OPL1000A2
 - RDA Micro:
   - RDA5981
 - Realtek:
@@ -55,9 +64,14 @@ Supported GUI-selectable chip/platform modes:
   - XR809
   - XR872 (XF16)
 
+See the [platform capability matrix](platforms.md) for supported operations and platform-specific limitations.
+
 Furthermore, it can automatically create an original firmware backup before flashing, attempt Tuya GPIO/config extraction from backups, and read/write OBK configuration where the selected platform supports it.
 
 Other built-in tools include:
+
+- ROM, eFuse and flash OTP reads through the Read ROM tab, where supported by the selected platform
+- Command-line flashing and backup operations
 - Tuya config extraction from a binary dump
 - OBK config and flash-dump download from an OBK device on LAN
 - LAN scanner and mass OBK CFG backup
@@ -87,7 +101,7 @@ It should be possible to compile and run this tool on Linux by using [Mono](http
 
 Once it's installed, you can compile this software by executing `msbuild` on the project directory. To execute the program, you can simply execute the following command:
 
-`mono BK7231Flasher/bin/debug/OpenIOT_flasher.exe`
+`mono BK7231Flasher/bin/Debug/OpenIOT_flasher.exe`
 
 Alternatively, you can use a prebuilt OpenIOTFlasher release. The release executable is `OpenIOTFlasher.exe`, packaged in `OpenIOTFlasher-v<version>.zip`.
 
@@ -106,7 +120,7 @@ No command line and no strange arguments required.
 
 # Detailed usage instructions (BK72xx)
 
-1. Download and unpack executable from Releases tab on the right
+1. Download the ZIP from [Releases](https://github.com/DeDaMrAzR/OpenIOTFlasher/releases/latest) and extract all files together
 2. Prepare flashing circuit for BK72xx
 
     - Get a USB to UART bridge with 3.3V voltage signals

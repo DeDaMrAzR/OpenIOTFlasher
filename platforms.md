@@ -22,7 +22,7 @@
 | Generic SPI CH341 | CH341 SPI | ✅ | ✅³ | ➖ | ➖ | ✅ | ❌ | ➖ | ➖ | ℹ️ |
 | LN882H | Lightning Semi | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | LN8825 | Lightning Semi | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
-| MT7687/MT7697 | MediaTek | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ➖ | ➖ | ❓ |
+| MT7687/MT7697⁹ | MediaTek | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ➖ | ➖ | ❓ |
 | RDA5981 | RDA Micro | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ℹ️ |
 | OPL1000A2 | Opulinks | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ➖ | ✅ |
 | SV6x66 | iComm Semi | ⚠️⁸ | ⚠️⁸ | ➖ | ➖ | ❌ | ❌ | ➖ | ➖ | ❌ |
@@ -55,3 +55,4 @@ R cmp / W cmp - Read/write compression via custom flasher stub; ➖ means not ap
 ⁶ OBK config reads work, but standalone OBK config writes are not implemented.<br>
 ⁷ RF partition restore and relocation are not defined for this platform.<br>
 ⁸ SV6x66 supports backup and complete 2 MiB backup restoration through recognized stock and CKW04 OpenBeken factory profiles, plus installation of validated dual-bank OpenBeken application bundles. Loader staging replaces inactive Bank A or B; the normalized backup cannot preserve that bank's previous contents. Full restore writes the saved boot selector last. Interrupted full restoration requires SPI recovery.<br>
+⁹ MT7687/MT7697 support includes firmware backup and writing, OBK configuration, and ROM, eFuse and flash OTP reads through the Read ROM tab. The ❓ entries await independent hardware verification. Compression is not enabled for this platform in the GUI.<br>
