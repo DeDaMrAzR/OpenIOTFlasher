@@ -7,8 +7,6 @@ OpenIOTFlasher is a simple Windows application that allows you to back up and fl
 
 This project is maintained as [OpenIOTFlasher](https://github.com/DeDaMrAzR/OpenIOTFlasher), a fork of the original [BK7231 GUI Flash Tool](https://github.com/openshwprojects/BK7231GUIFlashTool) and all credits belongs to the owner of that repo!!!
 
-Thanks also to [NonPIayerCharacter](https://github.com/NonPIayerCharacter) for MT7687/MT7697 support and [divadiow](https://github.com/divadiow) for the Linux CLI fix and the SM2135 current-value correction ported from [upstream PR #179](https://github.com/openshwprojects/BK7231GUIFlashTool/pull/179).
-
 Download the latest `OpenIOTFlasher-v<version>.zip` from [Releases](https://github.com/DeDaMrAzR/OpenIOTFlasher/releases/latest). Extract the complete archive and keep `OpenIOTFlasher.exe`, its `.exe.config` file and the supplied DLLs together. The Windows application requires .NET Framework 4.8.
 
 Supported GUI-selectable chip/platform modes:
