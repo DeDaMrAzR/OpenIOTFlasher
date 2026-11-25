@@ -22,6 +22,7 @@
 | Generic SPI CH341 | CH341 SPI | ✅ | ✅³ | ➖ | ➖ | ✅ | ❌ | ➖ | ➖ | ℹ️ |
 | LN882H | Lightning Semi | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | LN8825 | Lightning Semi | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
+| MT7687/MT7697 | MediaTek | ❓ | ❓ | ❓ | ❓ | ❓ | ❓ | ➖ | ➖ | ❓ |
 | RDA5981 | RDA Micro | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ℹ️ |
 | OPL1000A2 | Opulinks | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ➖ | ✅ |
 | SV6x66 | iComm Semi | ⚠️⁸ | ⚠️⁸ | ➖ | ➖ | ❌ | ❌ | ➖ | ➖ | ❌ |
