@@ -38,7 +38,7 @@ Supported GUI-selectable chip/platform modes:
   - GD32VW553
 - Generic SPI CH341
 - iComm Semi:
-  - SV6x66 (backup and guarded full-image restore)
+  - SV6x66
 - Lightning Semi:
   - LN882H
   - LN8825
